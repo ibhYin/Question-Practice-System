@@ -1,0 +1,239 @@
+# Redis 经典面试题
+- title: "Redis 为什么这么快？"
+  difficulty: 1
+  tags: ["Redis", "性能"]
+  position_tags: ["java", "backend", "golang", "python", "cpp", "dba"]
+  answer: |
+    1. **纯内存操作**：数据都在内存里，读写本身就是内存级速度（10 万+ QPS 单节点）。
+    2. **IO 多路复用 + 单线程事件循环**：epoll 监听大量连接，单线程无锁、无上下文切换开销（6.0 前）。
+    3. **高效数据结构**：SDS、跳表、压缩列表、整数集合等都是针对场景特化的结构，很多操作 O(1)/O(logN)。
+    4. **单线程模型的取舍**：瓶颈不在 CPU 而在网络和内存，避免多线程竞争反而更快；6.0 起网络读写用多线程，命令执行仍是单线程（保证原子性）。
+    5. **补充**：C 语言实现、自适应编码的紧凑存储（小数据用 ziplist 省内存也更快）。
+
+- title: "Redis 的常用数据类型及其底层数据结构？"
+  difficulty: 2
+  tags: ["Redis", "数据结构"]
+  position_tags: ["java", "backend", "golang", "python", "cpp", "dba"]
+  answer: |
+    1. **String（SDS 简单动态字符串）**：缓存对象 JSON、计数器（INCR）、分布式锁。SDS 记录长度、预分配空间、二进制安全，O(1) 取长度。
+    2. **Hash（listpack / hashtable）**：对象属性存储（user:{id} 整个 hash）。元素少且短用 listpack 紧凑存储，超阈值转 dict（渐进式 rehash）。
+    3. **List（quicklist，7.0 后 listpack 节点组成双向链表）**：消息队列、最新列表。LPUSH+RPOP 两端操作。
+    4. **Set（intset / hashtable）**：去重、共同关注（SINTER 交并差）、抽奖（SRANDMEMBER）。
+    5. **ZSet（listpack / skiplist + dict）**：排行榜（ZRANGE）、延迟队列（score 存时间）。skiplist 保序 O(logN) 插入，dict 做 member→score 的 O(1) 查询，两者共存。
+    6. **进阶类型**：BitMap（签到）、HyperLogLog（UV 估算）、GEO（附近的人）、Stream（消息队列，7.x 推荐）。
+
+- title: "跳表是什么？Redis 的 ZSet 为什么用跳表而不用红黑树？"
+  difficulty: 3
+  tags: ["跳表", "ZSet"]
+  position_tags: ["java", "backend", "golang", "cpp", "dba"]
+  answer: |
+    1. **跳表原理**：在有序链表基础上加多级索引层，每层节点数约减半，查找从 O(n) 降到 O(logN)，空间换时间。插入/删除只改前后指针，不用旋转。
+    2. **Redis 实现**：每个节点随机层数（幂次定律，层数越高概率越低），双向链表（span 记录跨度支持按排名查找 ZRANK）。
+    3. **为什么不用红黑树**：
+       - 实现简单，调试方便，代码可读性好（作者 antirez 原话）；
+       - 范围查询 [100, 200] 时跳表找到起点后沿底层链表顺序走即可，红黑树要中序遍历回溯；
+       - 插入删除无需旋转，平均更简单；
+       - 内存可以通过调节概率 p 灵活权衡。
+    4. **对比 B+ 树**：Redis 是内存库，无磁盘 IO 顾虑，跳表天然够用；B+ 树为减少磁盘 IO 而设计，在内存场景没有优势。
+
+- title: "Redis 的 RDB 和 AOF 两种持久化原理与取舍？什么是混合持久化？"
+  difficulty: 2
+  tags: ["持久化", "RDB", "AOF"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp", "python"]
+  answer: |
+    1. **RDB（快照）**：fork 子进程把内存数据二进制快照写盘（save/bgsave，及自动触发）。文件小恢复快；但两次快照间的数据宕机会丢，fork 瞬间可能卡顿（写时复制）。
+    2. **AOF（追加日志）**：每条写命令追加到 AOF 缓冲再刷盘。刷盘策略 appendfsync：always（不丢但慢）/ everysec（默认，最多丢 1 秒）/ no。文件大、恢复慢，靠 **AOF 重写**（fork 子进程按当前数据生成最小命令集）压缩体积，重写期间的新命令进 AOF 重写缓冲防止丢失。
+    3. **取舍**：RDB 牺牲实时性换性能和恢复速度；AOF 牺牲一点性能换数据安全。
+    4. **混合持久化（4.0+，推荐）**：aof-use-rdb-preamble。重写时文件前半段是 RDB 全量、后半段是增量 AOF 命令——恢复快 + 丢得少。纯缓存场景也可以完全不持久化。
+
+- title: "Redis 的过期删除策略和内存淘汰策略分别是什么？"
+  difficulty: 2
+  tags: ["过期策略", "内存淘汰"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp", "test"]
+  answer: |
+    1. **过期删除（针对设置了 TTL 的 key）**：
+       - **惰性删除**：访问时检查，过期才删——省 CPU 但冷数据占内存；
+       - **定期删除**：每 100ms 随机抽一批带 TTL 的 key 删过期的，若过期比例高则继续抽——渐进清理；
+       - 两者配合，漏网的靠内存淘汰兜底。
+    2. **内存淘汰（maxmemory 满时触发）**：
+       - noeviction（默认）：写报错；
+       - allkeys-lru：全键 LRU，**缓存场景最常用**；
+       - volatile-lru / volatile-ttl / volatile-random：只在设了 TTL 的键里淘汰；
+       - allkeys-lfu（4.0+）：全键最不经常使用，适合热点更集中的场景；
+       - allkeys-random。
+    3. **注意**：Redis 的 LRU 是近似 LRU（随机采样），LFU 用对数计数器记访问频率。
+
+- title: "什么是缓存穿透、缓存击穿、缓存雪崩？分别怎么解决？"
+  difficulty: 2
+  tags: ["缓存", "高并发"]
+  position_tags: ["java", "backend", "golang", "python", "cpp", "test"]
+  answer: |
+    1. **穿透（查不存在的数据，缓存永不命中打穿到 DB）**：
+       - 缓存空值（短 TTL）；
+       - **布隆过滤器**前置拦截：一定不存在就直接返回（存在误判率，只说"可能存在"）；
+       - 参数校验（id<=0 直接拒）、风控限流。
+    2. **击穿（某个热点 key 过期瞬间，大量并发同时打 DB）**：
+       - **互斥锁**：只放一个线程去查 DB 重建缓存，其他等待（SETNX）；
+       - **逻辑过期**：物理永不过期，值里带过期时间，发现过期后异步重建、期间返回旧值；
+       - 热点 key 永不过期 + 主动刷新。
+    3. **雪崩（大量 key 同时过期或 Redis 宕机，DB 被冲垮）**：
+       - 过期时间加随机抖动，避免同时失效；
+       - 多级缓存（本地 Caffeine + Redis）；
+       - 限流降级熔断保护 DB（.sentinel/hystrix/resilience4j）；
+       - Redis 高可用（哨兵/集群）防止整体宕机；
+       - 提前预热。
+
+- title: "缓存与数据库的一致性怎么保证？先更新数据库还是先删缓存？"
+  difficulty: 3
+  tags: ["缓存一致性", "Cache Aside"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp", "python"]
+  answer: |
+    1. **Cache Aside 模式（推荐）**：读——先读缓存，miss 则读 DB 回填；写——**先更新 DB，再删除缓存**（不是更新缓存）。
+    2. **为什么删缓存而非更新缓存**：并发写时更新缓存的顺序不可控，可能把旧值写回；且缓存可能经过加工（join、聚合），写时更新容易脏，删除后惰性重建最简单。
+    3. **为什么先更 DB 再删缓存**：反过来"先删缓存再更 DB"时，删完到提交前，读请求会把**旧值**填回缓存，脏到下次过期。先更 DB 后删缓存的不一致窗口极小（删除在写后），且需要"读比写慢 + 恰好 miss"同时发生才脏，概率极低。
+    4. **兜底增强**：
+       - **延迟双删**：更完删一次，延迟几百毫秒再删一次，清理主从延迟/并发窗口的脏数据；
+       - 删缓存失败重试（消息队列/订阅 binlog 的 Canal 异步删）；
+       - 缓存设 TTL 兜底，最终一致。
+    5. **强一致做不到也不必要**：追求强一致就该加分布式锁串行化，代价是吞吐崩塌——先想清楚业务要不要。
+
+- title: "Redis 分布式锁怎么实现？有哪些坑？看门狗是什么？"
+  difficulty: 3
+  tags: ["分布式锁", "Redisson"]
+  position_tags: ["java", "backend", "golang", "cpp", "python"]
+  answer: |
+    1. **基本实现**：`SET lock_key unique_value NX EX 30`——NX 保证互斥，EX 防死锁，value 放唯一标识（uuid+线程id）。
+    2. **解锁**：**Lua 脚本**原子执行"判断 value 是自己的才 DEL"——防止误删别人的锁（自己的任务超时后锁已易主）。
+    3. **坑**：
+       - 业务执行时间 > 锁 TTL：锁提前释放，别人进来。→ **看门狗续期**：后台线程定期（如每 10s）把锁 TTL 续回 30s，直到任务完成（Redisson 默认实现）；
+       - 主从切换锁丢失：主库写入锁后没同步就宕机，新主没有这把锁。→ Redlock 多节点多数派，或业务上用 fencing token/幂等兜底；
+       - 忘了设 EX：进程挂了锁永存（死锁）。
+    4. **实践**：直接用 **Redisson**（RLock，自动续期、可重入、Pub/Sub 唤醒等待者）；能不用锁就不用，优先考虑幂等设计和数据库唯一约束。
+
+- title: "Redlock 是什么？它有什么争议？"
+  difficulty: 3
+  tags: ["分布式锁", "Redlock"]
+  position_tags: ["java", "backend", "cpp", "dba"]
+  answer: |
+    1. **Redlock（红锁）**：部署 N 个（奇数，如 5 个）独立 Redis 主节点，加锁时**依次**向所有节点 SET NX，**多数派（≥N/2+1）成功且总耗时小于锁有效期**才算加锁成功；失败则向所有节点发起释放。
+    2. **目的**：解决单主/主从架构下"主库宕机锁丢失"的问题——不依赖复制，靠多数派仲裁。
+    3. **争议（Martin Kleppmann vs antirez）**：
+       - Martin 指出：进程 GC 停顿/时钟跳跃可能让"持有者"和"服务端"对锁是否有效产生分歧，Redlock 依赖时钟假设，不够安全；
+       - 主张：锁只做**效率优化**（避免重复计算）用 Redlock 没问题；若做**正确性保证**（不许出错），单靠锁不够，需要 **fencing token**（递增令牌 + 存储层校验拒绝旧令牌）；
+       - antirez 反驳了时钟假设的可控性，但社区普遍结论：**Redis 锁适合效率场景，正确性场景要加幂等/token 校验或换 ZooKeeper/etcd**。
+    4. **实践**：大多数业务用 Redisson 单实例锁 + 业务幂等就够了，真要强正确性用 etcd/ZK。
+
+- title: "Redis 主从复制的原理？"
+  difficulty: 2
+  tags: ["主从复制", "高可用"]
+  position_tags: ["dba", "backend", "java", "golang"]
+  answer: |
+    1. **首次全量同步（psync）**：从库发 psync ? -1 → 主库 bgsave 生成 **RDB** 发给从库，期间新写命令进 **replication backlog 缓冲区** → 从库清空旧数据载入 RDB → 再接收缓冲区里的增量命令。
+    2. **命令传播**：同步完成后，主库每条写命令持续发给从库。
+    3. **断线重连**：从库带 replication id + offset 重连。offset 还在 backlog 环形缓冲里 → **增量同步**（部分重同步）；已刷掉 → 退化全量同步。
+    4. **无盘复制**：主库直接把 RDB 流式发给从库不落盘。
+    5. **特点**：异步复制（可能有延迟和丢数据）、级联复制（从库再挂从库减轻主库压力）。
+
+- title: "哨兵（Sentinel）的原理？主库挂了之后如何选新主？"
+  difficulty: 2
+  tags: ["哨兵", "高可用"]
+  position_tags: ["dba", "backend", "java", "golang"]
+  answer: |
+    1. **职责**：监控（每秒 ping 主从）、**故障判定**、自动**故障转移**、通知客户端最新主库地址。
+    2. **判定**：
+       - **主观下线（SDOWN）**：单个哨兵 ping 超时（down-after-milliseconds）；
+       - **客观下线（ODOWN）**：≥quorum 个哨兵都认为下线，才确认。
+    3. **故障转移流程**：
+       - 哨兵之间 **Raft 式选举出 leader 哨兵**执行转移；
+       - 从库中选新主：过滤掉断连久的 → 比较优先级 → 比较复制 offset（数据最全）→ 比较 runid；
+       - 其他从库执行 SLAVEOF 新主；旧主恢复后降级为从库；
+       - 通知客户端（哨兵提供发布/订阅 +switch-master 事件）。
+    4. **注意**：哨兵至少 3 个且奇数部署（防脑裂）；客户端要用哨兵地址而不是写死主库 IP。
+
+- title: "Redis Cluster 集群的原理？数据怎么分布的？"
+  difficulty: 3
+  tags: ["集群", "分片"]
+  position_tags: ["dba", "backend", "java", "golang", "cpp"]
+  answer: |
+    1. **分片方式**：16384 个**哈希槽 slot**，key 按 `CRC16(key) % 16384` 落槽，槽分配给各主节点（支持在线迁移槽）。
+    2. **为什么是 16384**：心跳包携带槽位图，16384 的 bitmap 只有 2KB，太大浪费带宽；且集群规模建议 ≤1000 节点，16384 足够。
+    3. **高可用**：主从结构 + 去中心化 Gossip 协议通信，主挂了其从库自动升主（类似哨兵机制内置）。
+    4. **客户端**：直连任意节点，key 不在本节点返回 **MOVED** 重定向；智能客户端缓存槽位映射直连正确节点，迁移期间 ASK 临时重定向。
+    5. **限制**：多 key 操作/事务/Lua 要求 key 在同一槽——用 **hash tag**（{user1000}.orders）把相关 key 归到同槽；不支持多数据库（只有 db0）；mget 跨槽需拆分。
+
+- title: "Redis 事务和 Lua 脚本的区别？Redis 事务支持 ACID 吗？"
+  difficulty: 2
+  tags: ["事务", "Lua"]
+  position_tags: ["java", "backend", "golang", "cpp", "dba"]
+  answer: |
+    1. **Redis 事务（MULTI/EXEC）**：命令入队，EXEC 时**按序单线程执行，中途不会插入其他客户端命令**——保证隔离性；但**不支持回滚**：入队报错的命令整个事务不执行，运行时错误（如对 String 做 LPUSH）其他命令照常执行；也没有 undo log。
+    2. **Lua 脚本（推荐）**：整个脚本作为单条命令原子执行，且**可以基于前一步的结果做逻辑判断**（先 get 再比较再 set），这是 MULTI/EXEC 做不到的。Redisson 分布式锁解锁就是 Lua。
+    3. **结论**：需要"判断+操作"的原子复合逻辑用 Lua；简单批量提交用 MULTI/EXEC；高并发下注意 Lua 别写太长（阻塞其他命令）。
+    4. **持久性**：取决于持久化配置（AOF everysec 可能丢 1 秒），不保证完全持久。
+
+- title: "pipeline 管道和 Lua 脚本的区别？什么时候用 pipeline？"
+  difficulty: 1
+  tags: ["性能", "pipeline"]
+  position_tags: ["java", "backend", "golang", "python", "test"]
+  answer: |
+    1. **RTT 问题**：每个命令一次网络往返，跨机房一次 1ms+，批量操作耗时爆炸。
+    2. **pipeline**：客户端把一批命令一次发出、一次收齐结果，**省网络往返**，不保证原子性（中间可能插入别的命令），服务端要缓存所有响应注意 batch 大小（几百~几千一批）。
+    3. **区别**：Lua 在服务端原子执行且能写逻辑；pipeline 只是传输优化、非原子。
+    4. **场景**：批量写入/查询（导入数据、批量 get）用 pipeline；需要"读-判断-写"原子性用 Lua；单纯大量 mget/mset 直接用现成批量命令更好。
+
+- title: "什么是大 key 和热 key？如何发现和处理？"
+  difficulty: 2
+  tags: ["大key", "热key", "性能"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp"]
+  answer: |
+    1. **大 key**：value 过大（String >10KB，集合元素过多 >5000）。危害：阻塞（单线程删大 key 卡住其他命令）、网络拥塞、内存倾斜、过期删除抖动。
+       - **发现**：`redis-cli --bigkeys`、RDB 离线分析（rdb-tools）、监控 slowlog；
+       - **处理**：拆分（大 hash 按字段分段、大 list 分片）、压缩 value、异步删除 **UNLINK**（惰性释放）代替 DEL、设置合理 TTL、迁移到合适存储（大 JSON → DB/对象存储）。
+    2. **热 key**：单 key QPS 极高，打到单个分片（集群下无法水平摊）。危害：该节点 CPU/带宽打满，其他 key 被拖累。
+       - **发现**：`--hotkeys`（需 LFU）、monitor 采样、客户端埋点统计；
+       - **处理**：**本地缓存**（Caffeine 挡最热一层）、key 加随机后缀复制多份分摊读（读时随机选一个）、读写分离扩副本、限流兜底。
+
+- title: "Redis 6.0 为什么要引入多线程？"
+  difficulty: 2
+  tags: ["多线程", "网络IO"]
+  position_tags: ["java", "backend", "golang", "cpp", "dba"]
+  answer: |
+    1. **背景**：单线程下，大流量时**网络读写和协议解析**成为瓶颈（read/write 系统调用占大头），CPU 多核利用不起来。
+    2. **6.0 方案**：**IO 线程**并行处理网络读取/解析和回写响应；**命令执行仍然是单线程**，所以不需要考虑并发控制，原子性语义不变。
+    3. **配置**：`io-threads 4`、`io-threads-do-reads yes`，官方建议 4 核机器 2~3 个 IO 线程，8 核 6 个，不是越多越好。
+    4. **另外的线程**：其实 Redis 一直有后台线程（异步删除 UNLINK、AOF 刷盘、关闭文件），6.0 的多线程专指网络 IO。
+
+- title: "如何用 Redis 实现排行榜、签到、延迟队列？"
+  difficulty: 2
+  tags: ["ZSet", "BitMap", "应用场景"]
+  position_tags: ["java", "backend", "golang", "python", "cpp"]
+  answer: |
+    1. **排行榜（ZSet）**：score 存分数，ZINCRBY 加分，ZREVRANGE 取 TopN，ZREVRANK 查我的名次，ZSCORE 查分。并列名次可 score 存 "分数*1e9 + 时间戳" 让先到者排前。
+    2. **签到（BitMap）**：`SETBIT sign:{uid}:{yyyyMM} day 1`，一个月 31 bit；BITCOUNT 统计当月签到天数，BITPOS 找第一次签到；连续签到可用多个 BitMap 或 String 记录。
+    3. **延迟队列（ZSet）**：score 存执行时间戳，生产 ZADD；消费端循环 `ZRANGEBYSCORE queue 0 now LIMIT 10` 取到期任务，取到后 ZREM（并发下用 Lua 保证"取到即删除"的原子性），再执行业务。注意失败重试和幂等。
+    4. **其他经典**：点赞/共同好友（Set 交并）、UV 统计（HyperLogLog 误差 0.81%）、附近的人（GEO）、全局限流（INCR+EXPIRE 或滑动窗口 ZSet）。
+
+- title: "Redis 内存满了怎么办？"
+  difficulty: 1
+  tags: ["内存", "淘汰策略"]
+  position_tags: ["dba", "backend", "java", "test"]
+  answer: |
+    1. **先看为什么会满**：只加不删的缓存、忘记设 TTL 的 key、大 key 堆积。
+    2. **应急**：配置 maxmemory + 合适的**淘汰策略**（缓存场景 allkeys-lru / allkeys-lfu），自动淘汰冷数据；临时清理可用 UNLINK 删大 key、清理无 TTL 的 key（`--bigkeys` 配合扫描）。
+    3. **治本**：
+       - 给所有缓存 key 设置 TTL + 随机抖动；
+       - 精简存储结构（hash 存对象比序列化 JSON 省、小结构自动 listpack 编码）；
+       - 拆分/扩容（Cluster 加分片）；
+       - 大数据量不适合 Redis 的（历史明细）放 DB/对象存储，Redis 只放索引和热点。
+    4. **监控**：info memory 看 used_memory 与 maxmemory 比例、mem_fragmentation_ratio（>1.5 说明碎片严重，考虑 activedefrag）。
+
+- title: "Redis 和 MySQL 的数据一致性问题在秒杀扣库存场景下如何设计？"
+  difficulty: 3
+  tags: ["秒杀", "库存", "一致性"]
+  position_tags: ["java", "backend", "cpp", "golang"]
+  answer: |
+    1. **思路：Redis 挡并发，MySQL 保最终正确。** 库存预热进 Redis（DECR 原子扣减），MySQL 通过异步/串行化落库。
+    2. **扣减层（Redis）**：`Lua 脚本：GET 库存 → 判断足够 → DECR`，或直接 DECR 后判负回补（INCR）；避免超卖靠单线程原子性，而不是先查后改。
+    3. **落库层（MySQL）**：扣减成功发消息（MQ 削峰），消费端 `UPDATE stock SET num=num-1 WHERE sku_id=? AND num>0` 用条件更新兜底防超卖——**DB 层的最后防线是 SQL 条件而不是应用判断**。
+    4. **对账与补偿**：Redis 和 DB 定期对账，不一致以 DB 为准修正 Redis；消息失败重试 + 幂等（唯一业务单号）。
+    5. **一致性说明**：这是**最终一致**方案——Redis 扣减成功到 DB 落库之间有窗口，用户视角看到"抢到了"，订单异步生成；宁可延迟不可超卖。

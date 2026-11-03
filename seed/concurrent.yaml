@@ -1,0 +1,104 @@
+# 并发编程经典面试题
+- title: "synchronized 的原理？锁升级过程是怎样的？"
+  difficulty: 3
+  tags: ["synchronized", "锁升级"]
+  position_tags: ["java"]
+  answer: |
+    1. **基本用法**：修饰实例方法（锁 this）、静态方法（锁 Class 对象）、代码块（锁指定对象）。
+    2. **底层**：基于对象头的 **Mark Word** + Monitor（每个对象关联一个 monitor，C++ ObjectMonitor：_owner、_EntryList、_WaitSet）。字节码层面代码块是 monitorenter/monitorexit，方法是 ACC_SYNCHRONIZED 标志。
+    3. **锁升级（JDK6 优化，只升不降）**：
+       - **无锁** → **偏向锁**：只有一个线程反复获取，Mark Word 记录线程 id，之后该线程进入无需 CAS（已废弃于 JDK15，因撤销成本高）；
+       - → **轻量级锁**：第二个线程竞争，CAS 自旋尝试把 Mark Word 换成锁记录指针，适合持有时间短的场景；
+       - → **重量级锁**：自旋失败（竞争激烈），膨胀为 monitor，未获取的线程阻塞挂起（涉及用户态内核态切换）。
+    4. **对比**：JDK6 前 synchronized 重量级直接挂起，性能差；升级机制让无竞争/低竞争场景接近无锁性能。
+
+- title: "volatile 的作用和原理？能保证原子性吗？"
+  difficulty: 2
+  tags: ["volatile", "JMM"]
+  position_tags: ["java"]
+  answer: |
+    1. **两个语义**：
+       - **可见性**：写 volatile 变量立即刷回主存，读时从主存取（MESI 缓存一致性协议 + 失效其他 CPU 缓存行）；
+       - **禁止指令重排**：编译器和 CPU 在 volatile 读写前后插入**内存屏障**。
+    2. **不保证原子性**：`volatile int i; i++` 依然不安全（i++ 是读-改-写三步，多线程交错会丢更新）——需要 AtomicInteger（CAS）或锁。
+    3. **典型应用**：
+       - **状态标志位**：`volatile boolean running` 控制线程停止；
+       - **双检锁单例**：`private volatile static Singleton instance`——防止 `new` 的三步（分配内存→初始化→赋值引用）被重排成"先赋值后初始化"，别的线程拿到未初始化对象。
+    4. **原理（JMM）**：volatile 写 = StoreStore + StoreLoad 屏障；volatile 读 = LoadLoad + LoadSemantics 屏障，happens-before 规则保证 volatile 写先行于后续读。
+
+- title: "CAS 是什么？ABA 问题怎么解决？"
+  difficulty: 2
+  tags: ["CAS", "原子类"]
+  position_tags: ["java"]
+  answer: |
+    1. **CAS（Compare And Swap）**：CPU 原子指令（cmpxchg），三个操作数——内存值 V、期望值 E、新值 N：V==E 才更新为 N，否则失败重试（自旋）。java.util.concurrent 的 Unsafe.compareAndSwapXxx 底层支撑，AtomicXxx、AQS 都基于它。
+    2. **优点**：无锁、无阻塞切换，低冲突时性能好。
+    3. **三个问题**：
+       - **ABA**：值从 A→B→A，CAS 以为没变过。对数值无所谓，对**引用/链表结构**有隐患（节点被复用）。解决：**AtomicStampedReference** 加版本号（stamp）、AtomicMarkableReference 加布尔标记；
+       - **自旋开销**：竞争激烈时长时间自旋空转 CPU——LongAdder 分段思想 / 退避 / 限流；
+       - **只能保证单个变量原子**：多个变量用 **AtomicReference 封装成对象** 或加锁。
+    4. **场景**：计数器用 LongAdder（高并发优于 AtomicLong）、无锁栈、状态位更新。
+
+- title: "AQS 的原理？ReentrantLock 和 synchronized 的区别？"
+  difficulty: 3
+  tags: ["AQS", "ReentrantLock"]
+  position_tags: ["java"]
+  answer: |
+    1. **AQS（AbstractQueuedSynchronizer）**：JUC 锁和同步器的骨架。
+       - 核心是一个 **volatile int state**（语义由子类定义：ReentrantLock 的重入次数、Semaphore 的许可数、CountDownLatch 的计数）；
+       - **CLH 变体的双向等待队列**：获取失败的线程包装成 Node 入队，park 挂起；释放时唤醒队头后继 unpark；
+       - **模板方法模式**：子类只需实现 tryAcquire/tryRelease（独占）或 tryAcquireShared/tryReleaseShared（共享），排队、挂起、唤醒由 AQS 统一处理。
+    2. **公平锁 vs 非公平锁**：非公平（默认）抢锁时先 CAS 插队一次，失败才排队——吞吐高；公平锁必须检查队列有无人排队，防饥饿。
+    3. **ReentrantLock vs synchronized**：
+       - ReentrantLock 需手动 unlock（finally），synchronized 自动释放；
+       - ReentrantLock 支持**公平锁、可中断获取（lockInterruptibly）、超时获取（tryLock(time)）、多 Condition 精准唤醒**；
+       - 性能 JDK6 后接近；能用 synchronized 就用，需要高级特性再上 ReentrantLock。
+
+- title: "线程池的核心参数有哪些？任务提交后的执行流程？拒绝策略？"
+  difficulty: 2
+  tags: ["线程池"]
+  position_tags: ["java"]
+  answer: |
+    1. **七个参数（ThreadPoolExecutor）**：corePoolSize 核心线程数、maximumPoolSize 最大线程数、keepAliveTime+unit 非核心线程空闲存活时间、workQueue 任务队列（有界 ArrayBlockingQueue / 无界 LinkedBlockingQueue / SynchronousQueue）、threadFactory、handler 拒绝策略。
+    2. **执行流程**：提交任务 → 核心线程未满则**新建核心线程**执行（即使有空闲核心线程）→ 满了**入队** → 队列满了**新建非核心线程**执行 → 达到 max 且队列满 → 执行**拒绝策略**。
+       （注意顺序：先队列后扩线程，和直觉相反——想让空闲线程先干活就配 SynchronousQueue。）
+    3. **拒绝策略**：AbortPolicy（默认，抛异常）、CallerRunsPolicy（调用者线程自己执行，反压降速）、DiscardPolicy（静默丢弃）、DiscardOldestPolicy（丢最老的）、自定义（记录日志/落库重试）。
+    4. **实践**：**禁用 Executors 快捷方法**（newFixedThreadPool 无界队列可能 OOM，newCachedThreadPool 线程数无上限）——手动 new ThreadPoolExecutor 并给有界队列；参数动态化（Nacos 动态调参 + setXxx 热更新）。
+
+- title: "线程池大小怎么设置？"
+  difficulty: 2
+  tags: ["线程池", "调优"]
+  position_tags: ["java"]
+  answer: |
+    1. **理论公式**：
+       - **CPU 密集型**：N（CPU 核数）或 N+1（防缺页停顿浪费）；
+       - **IO 密集型**：N × (1 + 等待时间/计算时间)，或经验 2N。
+       获取核数：Runtime.getRuntime().availableProcessors()。
+    2. **公式只是起点**：真实系统 IO 等待比例难估，应以**压测为准**——观察 CPU 利用率（目标 70~80%）、线程上下文切换、接口 RT，逐步调整。
+    3. **实践原则**：
+       - 不同业务**线程池隔离**（核心接口和普通任务分开，防止相互拖垮——线程池风暴）；
+       - 队列必须有界，配合理拒绝策略；
+       - 给线程起名（threadFactory），排查问题时好认；
+       - 动态线程池（setCorePoolSize 运行时调整）+ 监控（activeCount、queueSize、拒绝次数告警）。
+
+- title: "ThreadLocal 的原理？为什么会内存泄漏？"
+  difficulty: 2
+  tags: ["ThreadLocal", "内存泄漏"]
+  position_tags: ["java"]
+  answer: |
+    1. **原理**：每个 Thread 内有一个 **ThreadLocalMap**（key 是 ThreadLocal 对象的**弱引用**，value 是存的值）。`threadLocal.get()` 实际是取当前线程的 map 按 this 查——**数据存在线程自己身上**，线程间天然隔离。
+    2. **内存泄漏链**：key 是弱引用，GC 后 key 变 null，但 **value 是强引用**，且被 Thread→ThreadLocalMap→Entry 强引用着——只要线程不死（**线程池的线程长活**），value 就回收不掉。
+    3. **正确用法**：**用完必须 remove()**，尤其线程池场景，放 try-finally。set/get 时其实有概率性清理 stale entry（探测式清理），但不保证。
+    4. **应用**：SimpleDateFormat 线程隔离、用户上下文传递（Spring 的 RequestContextHolder、链路追踪 traceId）、跨层传参不污染方法签名。
+    5. **InheritableThreadLocal / TransmittableThreadLocal**：父子线程传递 / 线程池场景传递上下文。
+
+- title: "wait、sleep、yield、join 的区别？"
+  difficulty: 1
+  tags: ["线程", "基础"]
+  position_tags: ["java", "test"]
+  answer: |
+    1. **wait**：Object 方法，**必须在 synchronized 块内调用**，释放锁进入 WAITING，等待 notify/notifyAll 或超时唤醒后**重新竞争锁**。用于线程间协作（生产者消费者）。
+    2. **sleep**：Thread 静态方法，**不释放锁**，只是让出 CPU 一段时间（TIMED_WAITING），时间到自动恢复。用于单纯休眠。
+    3. **yield**：提示调度器"我愿意让出 CPU"，从运行态回就绪态，**不释放锁**，可能立即又被调度——只是个建议，不保证。
+    4. **join**：在当前线程调 t.join()，等 t 执行完再继续——底层是当前线程在 t 对象上 wait 循环。
+    5. **记忆**：wait 释放锁且要锁；sleep 不释放锁不要锁；join 等别人干完；yield 让个位置但说话不算数。

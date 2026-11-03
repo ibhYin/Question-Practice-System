@@ -1,0 +1,66 @@
+# JVM 经典面试题
+- title: "JVM 的内存区域是怎么划分的？哪些线程共享？"
+  difficulty: 2
+  tags: ["JVM", "内存区域"]
+  position_tags: ["java"]
+  answer: |
+    1. **线程私有**：
+       - **程序计数器**：当前线程执行字节码的行号指示器，唯一不会 OOM 的区域；
+       - **虚拟机栈**：方法调用的栈帧（局部变量表、操作数栈、动态链接、返回地址），StackOverflowError 深递归、OutOfMemoryError 撑太多线程；
+       - **本地方法栈**：native 方法用。
+    2. **线程共享**：
+       - **堆**：对象实例和数组所在地，GC 主战场，分新生代（Eden + 两个 Survivor）和老年代；
+       - **方法区（JDK8 后为元空间 Metaspace）**：类元信息、运行时常量池（字符串常量池 JDK7 起移到堆）。元空间用**本地内存**，不再受堆上限约束（默认无限，需设 -XX:MaxMetaspaceSize 防 OOM）。
+    3. **其他**：直接内存（NIO DirectByteBuffer，不在堆但受机器内存限制）。
+
+- title: "对象什么时候会进入老年代？"
+  difficulty: 2
+  tags: ["GC", "分代"]
+  position_tags: ["java"]
+  answer: |
+    1. **年龄达标**：对象每熬过一次 Minor GC 年龄 +1，默认 15 岁晋升（-XX:MaxTenuringThreshold；因为对象头标记年龄 4 bit，上限 15）。
+    2. **大对象直接进老年代**：超过 -XX:PretenureSizeThreshold（Serial/ParNew 有效）或超过 G1 的 region 一半（Humongous 对象）——避免短命大对象在 Survivor 间来回复制。
+    3. **动态年龄判断**：Survivor 中同龄及以下对象总大小超过 Survivor 一半，≥该年龄的直接晋升（不必等到 15 岁）。
+    4. **Survivor 放不下**：Minor GC 后存活对象太大，直接进老年代（空间分配担保 HandlePromotionFailure）。
+
+- title: "常见的垃圾回收算法有哪些？各自的优缺点？"
+  difficulty: 1
+  tags: ["GC", "算法"]
+  position_tags: ["java"]
+  answer: |
+    1. **标记-清除**：标记可达对象后清除。简单；产生**内存碎片**，效率一般。
+    2. **标记-复制**：内存分两块，存活对象复制到另一半，整块清空。无碎片、复制快；代价是可用内存减半、存活对象多时复制开销大——**适合新生代**（存活率低），所以 Eden:S0:S1=8:1:1 而不是对半。
+    3. **标记-整理**：标记后把存活对象向一端移动。无碎片；移动对象要 STW 修正引用，慢——**适合老年代**。
+    4. **分代收集理论**：绝大多数对象朝生夕死 → 新生代复制、老年代整理/清除，按对象生命周期选算法。
+    5. **补充**：判定垃圾用**可达性分析**（GC Roots：栈帧局部变量、静态变量、常量、JNI 引用等），不是引用计数（循环引用问题）。
+
+- title: "CMS 和 G1 的原理与区别？ZGC 了解吗？"
+  difficulty: 3
+  tags: ["GC", "G1", "CMS", "ZGC"]
+  position_tags: ["java"]
+  answer: |
+    1. **CMS（并发标记清除，JDK14 移除）**：以最短 STW 为目标。四阶段：初始标记（STW，标 GC Roots 直达对象）→ 并发标记 → 重新标记（STW，修正并发期间变动）→ 并发清除。
+       缺点：CPU 敏感、**无法处理浮动垃圾**（并发清理期间新产生）、**标记-清除有碎片**（碎片多时触发 Full GC 用 Serial Old 单线程整理，卡顿巨大）。
+    2. **G1（JDK9+ 默认）**：把堆划成大小相等的 **Region**（每个可动态扮演 Eden/Survivor/Old/Humongous），仍然分代。
+       - **可预测停顿**：-XX:MaxGCPauseMillis（默认 200ms），G1 跟踪各 Region 回收价值，优先回收**垃圾最多**的 Region（Garbage First 名字由来）；
+       - 整体是标记-整理、Region 之间是复制，**无碎片**；
+       - **三色标记 + SATB** 处理并发标记的漏标。
+    3. **ZGC（JDK11 实验 → 15 正式）**：着色指针 + 读屏障，全阶段并发度极高，**停顿 <1ms 且与堆大小无关**，支持 TB 级堆；代价是吞吐略降。JDK17+ 生产可用。
+    4. **选择**：大堆低延迟用 G1 起步，极致延迟上 ZGC；老项目还在 CMS 的尽快升级。
+
+- title: "线上 CPU 飙高或 OOM 了，你如何排查？"
+  difficulty: 3
+  tags: ["排查", "OOM", "实战"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **CPU 飙高排查**：
+       - `top` 找到高 CPU 的 **Java 进程 pid**；
+       - `top -Hp pid` 找到进程内高 CPU 的**线程 tid**；
+       - `printf '%x' tid` 转十六进制；
+       - `jstack pid | grep -A 20 nid=0x{tid}` 定位到具体栈（常见：死循环、正则回溯、频繁 GC 的 GC 线程、锁竞争）。
+    2. **OOM 排查**：
+       - 先留现场：JVM 参数 `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=...`；
+       - `jmap -dump:live,format=b,file=heap.hprof pid`（会 STW，生产慎用，优先用自动 dump）；
+       - **MAT / JProfiler 分析**：看支配树找最大对象、泄漏报告，定位持有者（常见：静态集合只加不删、大查询一次拉全表、ThreadLocal 未 remove、缓存无上限）。
+    3. **常用命令**：jstat -gcutil pid 1000 看 GC 频率和各代占用、jmap -histo 快速看对象分布、arthas（dashboard/heapdump/profiler 火焰图）。
+    4. **预防**：上线前压测、合理 -Xmx 与容器内存匹配（注意容器内 JVM 感知内存限制）、缓存设上限、分页查询。

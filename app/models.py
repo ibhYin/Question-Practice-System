@@ -1,0 +1,74 @@
+from datetime import datetime
+
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .database import Base
+
+
+class Question(Base):
+    """题库：内置题 / 手动录入的真题 / AI 生成的题"""
+
+    __tablename__ = "question"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(Text)
+    # MYSQL / REDIS / JAVA / JVM / CONCURRENT / SPRING / NETWORK / SCENARIO
+    category: Mapped[str] = mapped_column(String(32))
+    difficulty: Mapped[int] = mapped_column(Integer, default=2)  # 1易 2中 3难
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 知识点标签
+    position_tags: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 适用岗位
+    # MANUAL 手动录入 / BUILTIN 内置 / AI 生成
+    source: Mapped[str] = mapped_column(String(16), default="MANUAL")
+    model_answer: Mapped[str] = mapped_column(Text, default="")  # 满分答案
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
+
+    __table_args__ = (
+        Index("ix_question_cat_diff", "category", "difficulty"),
+        Index("ix_question_source", "source"),
+    )
+
+
+class InterviewSession(Base):
+    """一场模拟面试"""
+
+    __tablename__ = "interview_session"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    position: Mapped[str] = mapped_column(String(128))
+    mode: Mapped[str] = mapped_column(String(16), default="STANDARD")  # STANDARD/REVIEW
+    question_count: Mapped[int] = mapped_column(Integer)
+    question_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 出题顺序，持久化兜底
+    # in_progress / finished / abandoned
+    status: Mapped[str] = mapped_column(String(16), default="in_progress")
+    total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # 总评
+    weak_categories: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 薄弱类别
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    answers: Mapped[list["InterviewAnswer"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class InterviewAnswer(Base):
+    """一题的作答记录：你的回答 + 满分答案 + 评分点评"""
+
+    __tablename__ = "interview_answer"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("interview_session.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("question.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)  # 第几题（1 起）
+    user_answer: Mapped[str] = mapped_column(Text, default="")
+    model_answer: Mapped[str] = mapped_column(Text, default="")
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0-100，无 LLM 时为空
+    ai_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    session: Mapped["InterviewSession"] = relationship(back_populates="answers")
+    question: Mapped["Question"] = relationship()

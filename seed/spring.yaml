@@ -1,0 +1,88 @@
+# Spring / Spring Boot 经典面试题
+- title: "谈谈你对 IoC 和 AOP 的理解？"
+  difficulty: 1
+  tags: ["IoC", "AOP"]
+  position_tags: ["java"]
+  answer: |
+    1. **IoC（控制反转）**：对象的创建和依赖装配由容器管理，而不是对象自己 new——控制权反转给 Spring。
+       - **DI（依赖注入）**是实现手段：构造器注入（推荐，不可变、依赖明确、便于测试）、setter、字段 @Autowired；
+       - 收益：解耦（面向接口，实现可替换）、单例复用、便于测试（可注入 mock）、生命周期统一管理。
+    2. **AOP（面向切面编程）**：把日志、事务、权限、限流等**横切逻辑**从业务代码里抽出来，动态织入。
+       - Spring AOP 用**动态代理**：有接口 JDK 动态代理（反射实现接口），无接口 CGLIB（子类字节码）；
+       - 核心：切点 Pointcut（在哪切）、通知 Advice（切了干什么：@Before/@After/@Around）、切面 Aspect = 切点+通知；
+       - 典型：@Transactional、自定义日志切面、接口幂等切面。
+    3. **一句话**：IoC 解决"对象怎么来"，AOP 解决"公共逻辑怎么加"，两者都是为了让业务代码只关心业务。
+
+- title: "Spring Bean 的生命周期？"
+  difficulty: 2
+  tags: ["Bean", "生命周期"]
+  position_tags: ["java"]
+  answer: |
+    1. **实例化**：根据 BeanDefinition 反射创建对象（构造器/工厂方法）。
+    2. **属性填充（依赖注入）**：populateBean，@Autowired 等注入依赖。
+    3. **Aware 回调**：BeanNameAware、BeanFactoryAware、ApplicationContextAware——让 Bean 拿到容器信息。
+    4. **BeanPostProcessor 前置**：postProcessBeforeInitialization——AOP 代理对象在此阶段生成（AnnotationAwareAspectJAutoProxyCreator）。
+    5. **初始化**：@PostConstruct → InitializingBean.afterPropertiesSet() → init-method。
+    6. **BeanPostProcessor 后置**：postProcessAfterInitialization。
+    7. **使用**：放入单例池，供程序使用。
+    8. **销毁**：容器关闭时 @PreDestroy → DisposableBean.destroy() → destroy-method。
+    9. **记忆主线**：实例化 → 属性注入 → Aware → 前置处理 → 初始化 → 后置处理 → 使用 → 销毁。面试常追：AOP 代理在哪一步生成（初始化后）、@PostConstruct 和 afterPropertiesSet 顺序。
+
+- title: "Spring 如何解决循环依赖？为什么要三级缓存而不是两级？"
+  difficulty: 3
+  tags: ["循环依赖", "三级缓存"]
+  position_tags: ["java"]
+  answer: |
+    1. **循环依赖**：A 依赖 B，B 又依赖 A。
+    2. **三级缓存**：
+       - 一级 singletonObjects：成品单例池；
+       - 二级 earlySingletonObjects：半成品（已实例化未填充属性）的提前曝光对象；
+       - 三级 singletonFactories：ObjectFactory 工厂（能返回代理）。
+    3. **流程**：A 实例化后先把工厂放进三级缓存 → A 填充属性发现要 B → 创建 B → B 填充属性要 A → 从三级缓存拿到 A 的工厂生成**早期引用**（需要 AOP 时在此生成代理）放入二级缓存 → B 完成 → A 继续完成。
+    4. **为什么要第三级（关键）**：如果 A 需要 AOP 代理，提前暴露的应是**代理**而不是原始对象。三级缓存存工厂，**只有真的发生循环依赖时才提前生成代理**；没有循环依赖就正常在初始化后生成，保持标准生命周期。若只有二级缓存，要么所有 Bean 一律提前代理（破坏设计原则），要么循环依赖拿到的是原始对象。
+    5. **限制**：只对**单例 + setter/字段注入**有效；构造器注入的循环依赖无解（用 @Lazy 或重构）；prototype 不支持。
+    6. **建议**：出现循环依赖多半是设计问题，优先重构拆分职责。
+
+- title: "Spring 事务的传播行为有哪些？事务在哪些情况下会失效？"
+  difficulty: 3
+  tags: ["事务", "传播行为"]
+  position_tags: ["java"]
+  answer: |
+    1. **常用传播行为**：
+       - REQUIRED（默认）：有事务加入，没有就新建；
+       - REQUIRES_NEW：挂起当前事务，开新事务（独立提交回滚，如记录操作日志，业务回滚日志也要留）；
+       - NESTED：嵌套事务（savepoint，外层回滚带动内层，内层回滚不影响外层）；
+       - SUPPORTS/NOT_SUPPORTED/MANDATORY/NEVER：跟随或禁止已有事务。
+    2. **事务失效的常见场景**：
+       - **方法非 public**：代理不走；
+       - **同类内部调用（this 调用）**：绕过代理对象，最经典——把方法拆到另一个 Bean，或注入自身代理（AopContext.currentProxy()）；
+       - **异常被 try-catch 吞了**：事务感知不到；
+       - **抛受检异常但没配 rollbackFor**：默认只回滚 RuntimeException 和 Error，需 @Transactional(rollbackFor = Exception.class)；
+       - **数据库引擎不支持事务**（MyISAM）；
+       - **多线程**：事务绑定 ThreadLocal 连接，子线程不在同一事务；
+       - **propagation = NOT_SUPPORTED / Bean 未被 Spring 管理**。
+    3. **底层**：AOP 代理环绕方法，开启事务 → 执行 → 无异常提交 / 有匹配异常回滚。
+
+- title: "BeanFactory 和 FactoryBean 的区别？"
+  difficulty: 2
+  tags: ["BeanFactory", "FactoryBean"]
+  position_tags: ["java"]
+  answer: |
+    1. **BeanFactory**：Spring 的**底层容器接口**（ApplicationContext 的父接口），负责 Bean 的定义、注册、获取（getBean）、生命周期管理——它是"造 Bean 的工厂"。
+    2. **FactoryBean**：一个**特殊的 Bean**，本身是工厂——getObject() 返回的才是真正暴露给容器的对象。用于复杂对象的构建封装。
+       - 经典例子：MyBatis 的 SqlSessionFactoryBean、Feign 的 FeignClientFactoryBean、Spring 的 & 获取自身（getBean("&name") 拿 FactoryBean 本身）。
+    3. **一句话区分**：BeanFactory 是容器；FactoryBean 是容器里的一个 Bean，它能生产别的 Bean。
+    4. **追问**：ApplicationContext 相比 BeanFactory 的增强——事件发布、国际化、资源加载、自动 BeanPostProcessor 注册、环境抽象。
+
+- title: "Spring Boot 的自动装配原理？"
+  difficulty: 2
+  tags: ["SpringBoot", "自动装配"]
+  position_tags: ["java"]
+  answer: |
+    1. **入口**：@SpringBootApplication = @SpringBootConfiguration + @ComponentScan + **@EnableAutoConfiguration**。
+    2. **@EnableAutoConfiguration** → @Import(AutoConfigurationImportSelector)。
+    3. **加载候选**：AutoConfigurationImportSelector 读取所有 jar 包 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`（2.7 前是 spring.factories），拿到全部自动配置类名单。
+    4. **按需过滤**：@ConditionalOnClass（类路径有该类才生效）、@ConditionalOnMissingBean（用户没自定义才用默认）、@ConditionalOnProperty 等——这就是"约定优于配置"：引入 starter 依赖即自动装配。
+    5. **属性绑定**：@EnableConfigurationProperties + @ConfigurationProperties 把 application.yml 的配置绑定到属性类。
+    6. **自定义 starter**：写 AutoConfiguration + conditions + spring/...imports 文件 → 打包发布，引入即用。
+    7. **排查技巧**：`--debug` 启动看 Conditions Evaluation Report，哪些自动配置生效/没生效及原因。

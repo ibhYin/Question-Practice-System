@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>面试刷题系统 · MySQL + Redis</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">🎤 面试刷题系统 <span class="brand-sub">MySQL + Redis 实战</span></div>
+      <nav class="nav">
+        <a v-for="t in tabs" :key="t.key" href="javascript:;"
+           :class="['nav-item', {active: view === t.key}]"
+           @click="go(t.key)">{{ t.label }}</a>
+      </nav>
+      <div class="health">
+        <span class="dot" :class="health.mysql"><i></i>MySQL</span>
+        <span class="dot" :class="health.redis"><i></i>Redis</span>
+        <span class="dot" :class="health.llm"><i></i>LLM</span>
+      </div>
+    </header>
+
+    <div v-if="resumeSession" class="resume-bar">
+      ⏸ 有一场进行中的面试（岗位：{{ resumeSession.position }}，共 {{ resumeSession.question_count }} 题）
+      <button class="btn small primary" @click="resumeInterview">继续面试</button>
+      <button class="btn small ghost" @click="abandonResume">放弃本场</button>
+    </div>
+
+    <main class="main">
+      <!-- ============ 首页 ============ -->
+      <section v-if="view === 'home'" class="home">
+        <div class="hero">
+          <h1>模拟面试 · 以战养战</h1>
+          <p>输入应聘岗位，系统按岗位画像从题库抽题，逐题作答后与「满分答案」对比复盘。</p>
+        </div>
+        <div class="start-card card">
+          <div class="form-row">
+            <label>应聘岗位</label>
+            <input v-model.trim="position" class="input" placeholder="例如：Java 后端开发（校招）/ Python 后端 / DBA" @keyup.enter="startInterview">
+          </div>
+          <div class="form-row">
+            <label>题目数量</label>
+            <div class="chips">
+              <button v-for="n in [5, 10, 15]" :key="n" class="chip" :class="{on: count === n}" @click="count = n">{{ n }} 题</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>考察范围 <span class="hint">不选则按岗位智能匹配</span></label>
+            <div class="chips">
+              <button v-for="c in categories" :key="c.code" class="chip"
+                      :class="{on: picked.includes(c.code)}"
+                      @click="toggleCat(c.code)">{{ c.name }}</button>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn primary big" :disabled="!position || starting" @click="startInterview">
+              {{ starting ? '出题中…' : '开始面试 →' }}
+            </button>
+            <span v-if="!llmEnabled" class="offline-tip">离线题库模式 · 在「设置」配置 LLM 后可自动出题与评分</span>
+          </div>
+          <p v-if="error" class="error">{{ error }}</p>
+        </div>
+
+        <div class="home-grid">
+          <div class="card stat-card">
+            <h3>类别得分率</h3>
+            <div v-if="!stats.categories || !stats.categories.length" class="empty">暂无答题数据，先来一场面试吧</div>
+            <div v-show="stats.categories && stats.categories.length" ref="chart" class="chart"></div>
+          </div>
+          <div class="card stat-card">
+            <h3>数据概览</h3>
+            <div class="stat-grid">
+              <div class="stat"><b>{{ stats.total_questions || 0 }}</b><span>题库题目</span></div>
+              <div class="stat"><b>{{ stats.session_count || 0 }}</b><span>面试场次</span></div>
+              <div class="stat"><b class="warn">{{ stats.due_count || 0 }}</b><span>到期待复习</span></div>
+              <div class="stat"><b>{{ stats.queue_size || 0 }}</b><span>错题队列</span></div>
+            </div>
+            <h3 style="margin-top:20px">🔥 高频错题</h3>
+            <div v-if="!stats.hot || !stats.hot.length" class="empty">还没有错题记录</div>
+            <ul v-else class="hot-list">
+              <li v-for="h in stats.hot" :key="h.id"><span class="cat">{{ h.category }}</span>{{ h.title }}<em>错 {{ h.wrong_count }} 次</em></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 面试进行中 ============ -->
+      <interview-view v-else-if="view === 'interview'" :session-id="sessionId" @finished="onInterviewFinished" @abandoned="onHome"></interview-view>
+
+      <!-- ============ 复盘 ============ -->
+      <sessions-view v-else-if="view === 'sessions'"></sessions-view>
+
+      <!-- ============ 错题本 ============ -->
+      <review-view v-else-if="view === 'review'"></review-view>
+
+      <!-- ============ 题库管理 ============ -->
+      <bank-view v-else-if="view === 'bank'"></bank-view>
+
+      <!-- ============ 设置 ============ -->
+      <settings-view v-else-if="view === 'settings'"></settings-view>
+    </main>
+
+    <footer class="foot">数据存储：MySQL（题库/记录）+ Redis（会话/错题队列）· 项目目录在外置盘，不占系统盘</footer>
+  </div>
+
+  <script src="/vendor/vue.global.prod.js"></script>
+  <script src="/vendor/echarts.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

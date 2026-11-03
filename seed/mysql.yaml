@@ -1,0 +1,281 @@
+# MySQL 经典面试题（category 由文件名推断）
+- title: "InnoDB 为什么选择 B+ 树作为索引结构，而不是 B 树、红黑树或哈希表？"
+  difficulty: 2
+  tags: ["索引", "B+树", "存储引擎"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **对比哈希表**：哈希只能等值查询，不支持范围查询和排序，而范围查询（BETWEEN、>、<、ORDER BY）是业务常态。
+    2. **对比红黑树/二叉树**：二叉结构树高随数据量增长很快（百万级数据约 20 层），每层都是一次磁盘 IO；B+ 树是多叉的，千叉树 3~4 层就能存千万级数据，磁盘 IO 次数从 20 次降到 3~4 次。
+    3. **对比 B 树**：
+       - B+ 树非叶子节点只存键不存数据，单页能容纳更多键，树更矮更胖，IO 更少；
+       - B+ 树叶子节点用双向链表串联，范围查询/全表扫描只需顺着链表遍历，B 树则要反复中序回溯；
+       - 所有查询都落到叶子节点，查询性能稳定。
+    4. **补充**：InnoDB 页大小默认 16KB，通常 3 层 B+ 树可支撑约 2000 万行（经验值，面试常问）。
+
+- title: "聚簇索引和二级索引的区别？什么是回表，如何避免？"
+  difficulty: 2
+  tags: ["索引", "回表", "InnoDB"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **聚簇索引（主键索引）**：叶子节点存储整行数据，数据和主键索引存在一起。InnoDB 表本身就是聚簇索引组织表，一张表只有一个。
+    2. **二级索引（辅助索引）**：叶子节点存的是"索引列值 + 主键值"，而不是整行数据。
+    3. **回表**：用二级索引查到主键后，还要回到聚簇索引再查一次完整行。例如 `SELECT * FROM t WHERE name='a'`，先在 name 索引拿到 id，再用 id 去主键索引取整行，共两次树查找。
+    4. **避免回表——覆盖索引**：如果查询的列全部包含在某个二级索引中，就不用回表。例如有联合索引 (name, age)，`SELECT id, name, age FROM t WHERE name='a'` 直接在二级索引拿全数据，explain 的 Extra 显示 Using index。
+    5. **实践**：高频查询按需建联合索引覆盖查询列；避免 `SELECT *`，它是回表最常见的诱因。
+
+- title: "什么是最左前缀原则？联合索引 (a, b, c) 哪些查询条件能命中索引？"
+  difficulty: 2
+  tags: ["索引", "联合索引"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **原则**：联合索引按 (a, b, c) 排序存储，查询条件必须从索引最左列开始、连续命中，才能使用该索引。
+    2. **(a,b,c) 各条件命中情况**：
+       - `a=1`：命中，用 a；
+       - `a=1 AND b=2`：命中，用 a,b；
+       - `a=1 AND b=2 AND c=3`：全命中；
+       - `b=2` 或 `b=2 AND c=3`：不命中（缺最左列 a）；
+       - `a=1 AND c=3`：只用 a（c 断层，索引扫描范围里再过滤 c）；
+       - `a>1 AND b=2`：a 用上范围扫描后 b 无法继续走索引（范围列后面的列失效）。
+    3. **排序同理**：`ORDER BY a, b` 可用索引排序；`ORDER BY b, a` 不行。
+    4. **实践**：把等值条件列放前面、范围条件列放最后；区分度高的列尽量靠前。
+
+- title: "索引在哪些情况下会失效？"
+  difficulty: 2
+  tags: ["索引", "SQL优化"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **对索引列做函数或运算**：`WHERE YEAR(create_time)=2024`、`WHERE id+1=10`，索引存的是原始值，运算后无法走索引，应改写为范围条件。
+    2. **隐式类型转换**：字符串列用数字查 `WHERE phone=13800000000`，MySQL 会把列转成数字比较，相当于对列套函数，索引失效。
+    3. **前导模糊查询**：`LIKE '%abc'` 无法用索引；`LIKE 'abc%'` 可以。
+    4. **联合索引不满足最左前缀**：跳过最左列直接查后面的列。
+    5. **OR 连接非索引列**：只要 OR 里有条件不走索引，整体就走全表扫描。
+    6. **优化器判定全表更快**：回表代价太大时（如查询命中大部分行），优化器会主动放弃索引，这不算"失效"而是代价选择。
+    7. **NOT IN / != / IS NOT NULL**：通常也可能走不了索引（视数据分布）。
+
+- title: "事务的 ACID 特性是什么？InnoDB 分别靠什么机制保证？"
+  difficulty: 2
+  tags: ["事务", "ACID", "InnoDB"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **原子性（Atomicity）**：事务内操作要么全成功要么全回滚。靠 **undo log** 实现：修改前先记旧值，回滚时按 undo log 反向补偿。
+    2. **一致性（Consistency）**：事务前后数据满足业务约束（如转账总额不变）。它是最终目的，由 A、I、D 共同保障 + 应用层约束（主键、外键、唯一索引、业务校验）。
+    3. **隔离性（Isolation）**：并发事务互不干扰。靠 **MVCC + 锁**：读用快照避免脏读/不可重复读，写用行锁/间隙锁避免相互覆盖。
+    4. **持久性（Durability）**：提交后数据不丢。靠 **redo log**：WAL 机制，先顺序写日志再刷数据页，宕机后 redo log 前滚恢复。
+
+- title: "事务的四个隔离级别分别解决什么问题？MySQL 默认是哪个？"
+  difficulty: 1
+  tags: ["事务", "隔离级别"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp", "test"]
+  answer: |
+    1. **读未提交（Read Uncommitted）**：能读到别人未提交的数据——存在脏读、不可重复读、幻读。
+    2. **读已提交（Read Committed）**：只读已提交数据，解决脏读——但仍存在不可重复读、幻读。Oracle/PostgreSQL 默认。
+    3. **可重复读（Repeatable Read）**：同一事务内多次读结果一致，解决脏读、不可重复读——标准 SQL 下仍有幻读，**但 InnoDB 通过 MVCC + 间隙锁在 RR 级别基本解决了幻读**。**MySQL InnoDB 默认级别**。
+    4. **串行化（Serializable）**：完全串行执行，最安全性能最差，几乎不用。
+    5. **补充**：查看/设置命令 `SELECT @@transaction_isolation`、`SET SESSION transaction_isolation='READ-COMMITTED'`；互联网公司常用 RC 级别（间隙锁少、并发好）。
+
+- title: "什么是 MVCC？InnoDB 是如何实现的？"
+  difficulty: 3
+  tags: ["MVCC", "事务", "undo log"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **MVCC（多版本并发控制）**：读操作不加锁，通过数据的多个历史版本实现"读写不冲突"，大幅提升并发性能。只在 RC/RR 级别生效。
+    2. **三大要素**：
+       - **隐藏列**：每行有 `DB_TRX_ID`（最后修改的事务 id）、`DB_ROLL_PTR`（回滚指针，指向 undo log 旧版本）；
+       - **版本链**：多次修改通过 roll_ptr 串成 undo log 链，旧版本都在链上；
+       - **ReadView**：读时生成"活跃事务快照"，包含活跃事务 id 列表、低水位、高水位。
+    3. **可见性判断**：从版本链最新版本开始，沿链找第一个对当前 ReadView 可见的版本——若该版本的 trx_id 是自己修改的、或已提交、或早于低水位，则可见；否则沿回滚指针找上一版本。
+    4. **RC 与 RR 的差别**：RC 每次 SELECT 都生成新 ReadView（所以能看到别人最新提交）；RR 只在事务第一次 SELECT 时生成并复用（所以全程快照一致）。
+
+- title: "InnoDB 的可重复读级别下，幻读被完全解决了吗？"
+  difficulty: 3
+  tags: ["事务", "幻读", "间隙锁"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **结论：快照读基本解决，当前读没有完全解决，存在"读到了，但改不到"的现象。**
+    2. **快照读（普通 SELECT）**：靠 MVCC 的 ReadView，全程读同一快照，别人插入的新行不可见——没有幻读。
+    3. **当前读（SELECT ... FOR UPDATE / UPDATE / DELETE）**：读最新已提交版本，靠 **临键锁（Next-Key Lock = 行锁 + 间隙锁）** 锁住记录及记录间空隙，阻止别的事务在范围内插入——也没有幻读。
+    4. **残留的幻读场景**：同一事务里先快照读、后当前读，会"看到"之前快照里没有的行（别人已提交的插入）。混用两种读会出现。
+    5. **规避**：同一事务内保持读法一致；需要"查了就改"的场景直接用 FOR UPDATE 当前读。
+
+- title: "InnoDB 有哪些锁？行锁、间隙锁、临键锁分别在什么时候加？"
+  difficulty: 3
+  tags: ["锁", "并发"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **按粒度**：
+       - **全局锁**：FTWRL，全库逻辑备份用；
+       - **表级锁**：表锁、**元数据锁 MDL**（增删改查自动加 MDL 读锁，DDL 加 MDL 写锁——所以长事务期间做 DDL 会阻塞全表）、**意向锁**（表级标记，表明行内有行锁，让表锁判断不用逐行检查）、AUTO-INC 锁；
+       - **行级锁**：加在索引记录上。
+    2. **三种行锁**：
+       - **Record Lock**：锁单条索引记录；
+       - **Gap Lock**：锁索引记录之间的间隙，防止插入，只在 RR 级别出现；
+       - **Next-Key Lock**：Record + Gap 的左开右闭区间，RR 级别下当前读的默认加锁单位。
+    3. **加锁规则**：等值命中唯一索引退化为行锁；等值未命中锁住所在间隙；范围查询锁住扫描到的区间。
+    4. **注意**：行锁挂在索引上——**没走索引的更新会升级为锁全表所有记录（近似锁表）**。
+
+- title: "数据库死锁是怎么产生的？如何排查和避免？"
+  difficulty: 3
+  tags: ["锁", "死锁"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **产生条件**：两个事务互相持有对方需要的锁并互相等待。典型：事务 A 锁行 1 等行 2，事务 B 锁行 2 等行 1；或两个事务以不同顺序对同一范围执行当前读。
+    2. **InnoDB 的处理**：锁等待图检测死锁，主动回滚代价小的事务，报 `Deadlock found`；另有 `innodb_lock_wait_timeout`（默认 50s）兜底。
+    3. **排查**：`SHOW ENGINE INNODB STATUS` 看 LATEST DETECTED DEADLOCK；开启 `innodb_print_all_deadlocks` 把所有死锁记到 error log；information_schema 的 INNODB_TRX / DATA_LOCKS 查当前锁。
+    4. **避免**：
+       - 多个事务**按相同顺序**访问资源（按 id 升序更新）；
+       - 事务尽量小、尽快提交，别在事务里做 RPC/耗时操作；
+       - 合理建索引，避免行锁膨胀；
+       - 高并发热点更新考虑用 Redis 原子操作或队列串行化兜底。
+
+- title: "redo log、undo log、binlog 的作用和区别？为什么提交要两阶段提交？"
+  difficulty: 3
+  tags: ["日志", "事务", "主从复制"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **redo log（InnoDB）**：物理日志，记录"某页做了某修改"。WAL：先写日志再刷盘，把随机写变顺序写，保证**崩溃恢复（持久性）**。循环写。
+    2. **undo log（InnoDB）**：逻辑日志，记录反向操作。用于**回滚（原子性）**和 **MVCC 版本链**。
+    3. **binlog（Server 层）**：逻辑日志，记录语句或行变更。用于**主从复制和数据恢复**，追加写。
+    4. **两阶段提交（redo log prepare → 写 binlog → redo log commit）**：保证两份日志逻辑一致。
+       - 若 redo 提交后、binlog 写前崩溃：恢复后 redo 处于 prepare，用 binlog 判断——binlog 完整则提交，不完整则回滚，避免主从不一致。
+    5. **区别总结**：层次不同（Server vs InnoDB）、内容不同（逻辑 vs 物理）、用途不同（复制/归档 vs 崩溃恢复/回滚）。
+
+- title: "一条 SQL 执行很慢，你的排查和优化思路是什么？EXPLAIN 的关键字段怎么看？"
+  difficulty: 2
+  tags: ["SQL优化", "EXPLAIN"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **先分类**：偶尔慢（锁等待、脏页刷新、并发高峰）vs 一直慢（SQL 本身问题）。用 `SHOW PROCESSLIST` 看当前状态，`performance_schema`/慢日志定位 SQL。
+    2. **EXPLAIN 关键列**：
+       - **type**：访问类型，从好到差 system > const > eq_ref > ref > range > index > ALL，线上要求至少 range；
+       - **key/key_len**：实际用到的索引及长度（判断联合索引用了几列）；
+       - **rows**：预估扫描行数；
+       - **Extra**：Using index（覆盖索引，好）；Using filesort（额外排序，尽量消除）；Using temporary（临时表，警惕）。
+    3. **常见优化**：补索引/改联合索引顺序；改写 SQL 消除函数运算和隐式转换；大分页改游标方式；深分页用延迟关联；大事务拆小；必要时加缓存（Redis）挡读。
+    4. **验证**：改完再 EXPLAIN 对比 rows/type，压测确认。
+
+- title: "LIMIT 1000000, 10 这种深分页为什么慢？怎么优化？"
+  difficulty: 2
+  tags: ["SQL优化", "分页"]
+  position_tags: ["java", "backend", "dba", "python", "golang", "cpp"]
+  answer: |
+    1. **为什么慢**：`LIMIT 1000000, 10` 要先按索引顺序取出前 1000010 条，再丢弃前 1000000 条，偏移量越大，扫描和回表越多（还可能每条都回表）。
+    2. **优化一：游标/条件翻页（首选）**：记录上一页最后一条的 id，下一页 `WHERE id > #{last_id} ORDER BY id LIMIT 10`，直接走索引定位，性能恒定。要求排序键单调（自增 id 或时间）。
+    3. **优化二：延迟关联**：必须跳页时，先用覆盖索引把目标页的 id 查出来再回表：
+       `SELECT * FROM t JOIN (SELECT id FROM t ORDER BY id LIMIT 1000000, 10) tmp ON t.id = tmp.id`
+       子查询只扫索引不回表，快一个数量级。
+    4. **产品层面**：限制最大页数（搜索引擎也只给前 76 页）、默认给连续翻页而非跳页。
+
+- title: "主从复制的原理是什么？主从延迟怎么处理？"
+  difficulty: 2
+  tags: ["主从复制", "高可用"]
+  position_tags: ["java", "backend", "dba", "golang", "python"]
+  answer: |
+    1. **复制流程**：主库写 binlog → 从库 IO 线程拉取 binlog 写入本地 relay log（中继日志）→ 从库 SQL 线程重放 relay log。默认异步复制。
+    2. **复制方式**：异步（默认，可能丢数据）、半同步（至少一个从库确认收到 binlog 才返回成功）、组复制 MGR（多数派）。
+    3. **主从延迟原因**：从库单线程重放（比主库并发写慢）、大事务、从库机器差、从库还在读长查询。
+    4. **应对方案**：
+       - **强制读主**：写后立刻要读的请求路由到主库（最常用）；
+       - **GMV 等待**：`WAIT FOR EXECUTED GTID`/半同步，读前确认已复制；
+       - **业务规避**：写完先展示"处理中"，稍后刷新；
+       - 治本：缩小事务、并行复制（MTS）、升级从库配置。
+
+- title: "分库分表怎么做？会带来哪些新问题？"
+  difficulty: 3
+  tags: ["分库分表", "架构"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp", "backend"]
+  answer: |
+    1. **什么时候做**：单表数据量过大（经验值 B+ 树 2000 万行后索引层级增长、性能下降）、单库写入瓶颈。先试：索引优化、归档冷数据、读写分离，都不行再拆。
+    2. **拆分方式**：
+       - **垂直**：按业务拆库（订单库/用户库），按字段拆表（大字段分离）；
+       - **水平**：同一张表按分片键（user_id、order_id）哈希或范围拆到多库多表。
+    3. **带来的问题**：
+       - **跨库 join 没了**：改为冗余字段、应用层组装或宽表；
+       - **分布式事务**：本地消息表、TCC、Seata、最终一致；
+       - **跨分片查询/分页**：ES 二级索引、异构宽表、聚合中间件；
+       - **全局唯一 id**：雪花算法、号段模式（不能用自增了）；
+       - **扩容数据迁移**：双写迁移 + 灰度切换。
+    4. **工具**：ShardingSphere、MyCat；中间件形态有 client 端和 proxy 端两种。
+
+- title: "char 和 varchar 的区别？int(11) 的 11 是什么意思？"
+  difficulty: 1
+  tags: ["数据类型"]
+  position_tags: ["java", "backend", "dba", "test"]
+  answer: |
+    1. **char(n)**：定长，不足补空格，存取都快（长度固定），适合手机号、MD5、国家编码等长度固定的值；最大 255 字符。
+    2. **varchar(n)**：变长，按实际长度存储（额外 1~2 字节记长度），省空间，适合长度波动的字符串；n 是**字符数**不是字节数（utf8mb4 下一个汉字 4 字节）。
+    3. **int(11)**：11 只是**显示宽度**（配合 zerofill 补零用），与存储大小和取值范围无关，int 永远 4 字节；MySQL 8 已废弃显示宽度的意义。
+    4. **实践**：金额用 DECIMAL 不用 float/double；状态用 tinyint；IP 可用 int unsigned（INET_ATON）。
+
+- title: "DROP、DELETE、TRUNCATE 的区别？"
+  difficulty: 1
+  tags: ["SQL基础"]
+  position_tags: ["java", "backend", "test", "dba"]
+  answer: |
+    1. **DELETE**：DML，逐行删除并记 undo/binlog，可加 WHERE，事务内可回滚，触发触发器；不重置自增值。
+    2. **TRUNCATE**：DDL，直接重建表结构清空数据，快；不能加 WHERE，**隐式提交不可回滚**；重置自增计数；只对表。
+    3. **DROP**：DDL，连表结构带数据整表删除，连权限索引一起没了；不可回滚。
+    4. **记忆**：删数据用 DELETE（可条件、可回滚）；清空整表用 TRUNCATE；删表用 DROP。生产执行 DDL 前先备份。
+
+- title: "线上大表如何安全地加字段/加索引？"
+  difficulty: 3
+  tags: ["DDL", "运维"]
+  position_tags: ["dba", "backend", "java"]
+  answer: |
+    1. **风险**：DDL 需要 MDL 写锁，若有长事务/慢查询持着 MDL 读锁，DDL 排队会**阻塞后续所有请求**，全表不可用。
+    2. **MySQL 8.0 Online DDL**：多数 DDL 用 INPLACE + 并发 DML，不锁写（加列 INSTANT 算法秒级）；但加索引、改列类型等仍需重建表，耗时长、主从延迟大。
+    3. **规范操作**：
+       - 执行前查长事务：`SELECT * FROM information_schema.INNODB_TRX`，先清场；
+       - 设置 `lock_wait_timeout` 小值 + DDL 带重试，拿不到 MDL 就退避；
+       - 低峰期执行；`ALGORITHM=INPLACE, LOCK=NONE` 显式声明，不支持就报错而不是偷偷降级。
+    4. **第三方工具**：gh-ost / pt-online-schema-change——影子表 + 增量同步 + 原子改名，全程可暂停可限速，大表首选。
+
+- title: "count(*)、count(1)、count(主键)、count(字段) 有什么区别？哪个快？"
+  difficulty: 1
+  tags: ["SQL基础", "聚簇函数"]
+  position_tags: ["java", "backend", "dba", "test"]
+  answer: |
+    1. **语义**：count(字段) 只统计该字段非 NULL 的行数；其余三种都统计行数（NULL 也算）。
+    2. **性能**（InnoDB）：
+       - count(*) 和 count(1)：等价，优化器选最小的可用索引扫描，不会全扫主键；
+       - count(主键)：必须取出主键值，走主键索引，通常比 count(*) 还慢一点；
+       - count(字段)：要判断 NULL，若该字段无索引还得回表/全扫，最慢。
+    3. **结论**：一律用 **count(\*)**，语义清晰且性能最优，这是 SQL 标准写法。
+    4. **补充**：InnoDB 的 count 需要扫索引（因为 MVCC 下每行可见性不同，没法存个总数）；精确总行数要求高时用 Redis 计数或单独统计表。
+
+- title: "MySQL 的 utf8 和 utf8mb4 有什么区别？为什么推荐 utf8mb4？"
+  difficulty: 1
+  tags: ["字符集"]
+  position_tags: ["java", "backend", "dba"]
+  answer: |
+    1. **utf8 在 MySQL 里是残缺实现**：最多 3 字节，存不了 emoji（4 字节）和部分生僻字。
+    2. **utf8mb4**：最多 4 字节，完整 UTF-8，能存 emoji 和所有 Unicode 字符。**建库建表一律用 utf8mb4**，连接串也指定 `characterEncoding=utf8mb4`。
+    3. **排序规则**：utf8mb4_general_ci 快但略粗糙，utf8mb4_unicode_ci 更准确；MySQL 8 默认 utf8mb4_0900_ai_ci 更标准，团队统一即可。
+    4. **坑**：历史表从 utf8 转 utf8mb4 要注意索引长度限制（767 字节 → 需 innodb_large_prefix / DYNAMIC 行格式，8.0 默认没问题）；改字符集是大 DDL，低峰操作。
+
+- title: "什么是脏读、不可重复读、幻读？分别举例说明。"
+  difficulty: 1
+  tags: ["事务", "并发问题"]
+  position_tags: ["java", "backend", "python", "test", "dba"]
+  answer: |
+    1. **脏读**：读到别人**未提交**的数据，对方回滚后你手里的数据就是错的。例：A 把余额 100 改成 1000 未提交，B 读到 1000 并据此放款，A 回滚。
+    2. **不可重复读**：同一事务内两次读**同一行**结果不同（别人 UPDATE 并提交了）。焦点在 UPDATE，读到了"新值"。
+    3. **幻读**：同一事务内两次执行**同一范围查询**，第二次多出/少了行（别人 INSERT/DELETE 并提交了）。焦点在 INSERT，读到了"新行"。
+    4. **区别**：不可重复读是"同一行的值变了"，幻读是"行数变了"。锁行能防不可重复读，防幻读要锁间隙。
+    5. **对应隔离级别**：RC 解决脏读；RR 解决不可重复读（InnoDB 下幻读也基本解决，见 MVCC/间隙锁）。
+
+- title: "MySQL 中一条 UPDATE 语句的完整执行流程是怎样的？"
+  difficulty: 2
+  tags: ["执行流程", "日志"]
+  position_tags: ["java", "backend", "dba", "golang", "cpp"]
+  answer: |
+    1. **Server 层**：连接器（鉴权/连接管理）→ 查询缓存（8.0 已移除）→ 分析器（词法/语法）→ 优化器（选索引、定 join 顺序）→ 调用执行器。
+    2. **执行器**：校验表权限，按执行计划调用 InnoDB 接口逐行处理。
+    3. **InnoDB 层（关键）**：
+       - 定位到目标数据页（Buffer Pool 命中与否）；
+       - 写 **undo log**（记旧值，供回滚/MVCC）；
+       - 修改 Buffer Pool 中的数据页（此时为脏页）；
+       - 写 **redo log buffer**，状态 prepare；
+       - 执行器写 **binlog**；
+       - **两阶段提交**：redo log 置为 commit；
+       - 后台线程择机把脏页刷回磁盘（WAL，不阻塞提交）。
+    4. **要点**：更新不一定立刻写磁盘，靠 redo log 保证崩溃后能恢复，binlog 保证从库能同步。

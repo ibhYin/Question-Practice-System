@@ -1,0 +1,757 @@
+/* 面试刷题系统 前端（Vue 3，无构建） */
+const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+
+/* ---------- API 助手 ---------- */
+async function api(path, opts = {}) {
+  const res = await fetch('/api' + path, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* 空响应 */ }
+  if (!res.ok) throw new Error(data.detail || `请求失败 (${res.status})`);
+  return data;
+}
+
+const CATEGORY_NAMES = {
+  MYSQL: 'MySQL', REDIS: 'Redis', JAVA: 'Java 基础', JVM: 'JVM',
+  CONCURRENT: '并发编程', SPRING: 'Spring', NETWORK: '计算机网络', SCENARIO: '场景设计',
+};
+const DIFF_LABEL = { 1: '易', 2: '中', 3: '难' };
+const DIFF_COLOR = { 1: 'ok', 2: 'warn', 3: 'bad' };
+
+function fmtTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/* 满分答案轻量渲染：**加粗** 和 `代码`，其余按纯文本 */
+function renderAnswer(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+}
+function scoreClass(s) {
+  if (s == null) return '';
+  if (s >= 80) return 'ok';
+  if (s >= 60) return 'warn';
+  return 'bad';
+}
+
+/* ---------- 面试进行中 ---------- */
+const InterviewView = {
+  props: ['sessionId'],
+  emits: ['finished', 'abandoned'],
+  setup(props, { emit }) {
+    const state = reactive({
+      loading: true, error: '',
+      position: '', total: 0, current: 0,
+      question: null,
+      answer: '',
+      submitting: false,
+      result: null,          // 最近一次提交结果
+      addedReview: false,    // 离线模式：本题已手动加入复习
+      phase: 'answering',    // answering | result | summary
+      summary: null,
+      llmEnabled: false,
+    });
+
+    async function loadProgress() {
+      try {
+        const p = await api(`/interviews/${props.sessionId}/progress`);
+        if (p.status !== 'in_progress') {
+          const detail = await api(`/interviews/${props.sessionId}`);
+          state.summary = detail;
+          state.phase = 'summary';
+        } else {
+          state.question = p.question;
+          state.total = p.total;
+          state.current = p.current || 0;
+          state.llmEnabled = p.llm_enabled;
+        }
+      } catch (e) { state.error = e.message; }
+      state.loading = false;
+    }
+
+    async function submit(skip = false) {
+      state.submitting = true; state.error = '';
+      try {
+        const r = await api(`/interviews/${props.sessionId}/answers`, {
+          method: 'POST',
+          body: { question_id: state.question.id, user_answer: skip ? '' : state.answer },
+        });
+        state.result = r;
+        state.current = r.seq;
+        state.phase = 'result';
+      } catch (e) { state.error = e.message; }
+      state.submitting = false;
+    }
+
+    async function nextQuestion() {
+      if (state.result.finished) return finish();
+      state.question = state.result.next_question;
+      state.answer = '';
+      state.result = null;
+      state.addedReview = false;
+      state.phase = 'answering';
+    }
+
+    async function addToReview() {
+      try {
+        await api(`/review/${state.result.question_id}/add`, { method: 'POST' });
+        state.addedReview = true;
+      } catch (e) { state.error = e.message; }
+    }
+
+    async function finish() {
+      try {
+        await api(`/interviews/${props.sessionId}/finish`, { method: 'POST' });
+      } catch (e) { /* 忽略，接着拉详情 */ }
+      const detail = await api(`/interviews/${props.sessionId}`);
+      state.summary = detail;
+      state.phase = 'summary';
+      emit('finished');
+    }
+
+    async function abandon() {
+      if (!confirm('确定放弃本场面试？已答题目仍会保存在复盘中。')) return;
+      await api(`/interviews/${props.sessionId}/abandon`, { method: 'POST' });
+      emit('abandoned');
+    }
+
+    onMounted(loadProgress);
+
+    return { state, submit, nextQuestion, finish, abandon, addToReview, renderAnswer, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+  },
+  template: `
+  <div>
+    <div v-if="state.loading" class="card">加载中…</div>
+
+    <!-- 答题中 -->
+    <template v-else-if="state.phase === 'answering' && state.question">
+      <div class="progress-wrap">
+        <span class="badge">第 {{ state.question.seq }} / {{ state.total }} 题</span>
+        <div class="progress-track"><div class="progress-fill" :style="{width: (state.question.seq - 1) / state.total * 100 + '%'}"></div></div>
+        <button class="btn small ghost danger" @click="abandon">放弃本场</button>
+      </div>
+      <div class="card q-card">
+        <div class="q-meta">
+          <span class="badge">{{ CATEGORY_NAMES[state.question.category] || state.question.category }}</span>
+          <span class="badge" :class="DIFF_COLOR[state.question.difficulty]">难度·{{ DIFF_LABEL[state.question.difficulty] }}</span>
+          <span v-for="t in state.question.tags" :key="t" class="badge gray">{{ t }}</span>
+        </div>
+        <div class="q-title">{{ state.question.title }}</div>
+      </div>
+      <div class="card">
+        <h3>你的回答</h3>
+        <textarea v-model="state.answer" class="input" rows="7"
+                  placeholder="像真实面试一样，把你知道的点都写出来：概念 → 原理 → 实践…（结构化作答更容易拿分）"></textarea>
+        <div class="answer-actions">
+          <button class="btn primary" :disabled="state.submitting" @click="submit(false)">{{ state.submitting ? '提交中…' : (state.llmEnabled ? '提交本题（AI 评分）' : '提交本题，看满分答案') }}</button>
+          <button class="btn ghost" :disabled="state.submitting" @click="submit(true)">这题不会，直接看答案</button>
+        </div>
+        <p v-if="state.error" class="error">{{ state.error }}</p>
+      </div>
+    </template>
+
+    <!-- 单题结果 -->
+    <template v-else-if="state.phase === 'result' && state.result">
+      <div class="progress-wrap">
+        <span class="badge">第 {{ state.result.seq }} / {{ state.total }} 题 · 已提交</span>
+        <div class="progress-track"><div class="progress-fill" :style="{width: state.result.seq / state.total * 100 + '%'}"></div></div>
+      </div>
+      <div class="card result-panel">
+          <div v-if="state.result.score != null">
+            <div class="score-ring" :class="scoreClass(state.result.score)"
+                 :style="{background: state.result.score >= 80 ? '#16a34a' : state.result.score >= 60 ? '#d97706' : '#dc2626'}">
+              {{ state.result.score }}<small style="font-size:11px;font-weight:400">分</small>
+            </div>
+          </div>
+          <div v-if="state.result.ai_comment" style="font-weight:600">AI 点评</div>
+        <div v-if="state.result.ai_comment" class="ai-comment">{{ state.result.ai_comment }}</div>
+        <div class="compare">
+          <div>
+            <h4>你的回答</h4>
+            <div class="box you">{{ state.result.user_answer || '（未作答）' }}</div>
+          </div>
+          <div>
+            <h4>⭐ 满分答案</h4>
+            <div class="box model" v-html="renderAnswer(state.result.model_answer)"></div>
+          </div>
+        </div>
+        <div class="answer-actions">
+          <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
+          <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
+          <span v-if="state.addedReview" class="badge ok" style="align-self:center">已加入错题本，明天复习</span>
+        </div>
+      </div>
+    </template>
+
+    <!-- 本场总结 -->
+    <template v-else-if="state.phase === 'summary' && state.summary">
+      <div class="card">
+        <div class="score-row">
+          <div>
+            <h3 style="font-size:18px">面试结束 · {{ state.summary.position }}</h3>
+            <span class="hint">{{ state.summary.question_count }} 题 · {{ fmtTime(state.summary.started_at) }}</span>
+          </div>
+          <div v-if="state.summary.total_score != null" class="score-big" :class="scoreClass(state.summary.total_score)" style="margin-left:auto;font-size:30px">
+            {{ state.summary.total_score }}<small style="font-size:13px"> 分</small>
+          </div>
+        </div>
+        <div v-if="state.summary.summary" class="summary-box">{{ state.summary.summary }}</div>
+        <div v-if="state.summary.weak_categories && state.summary.weak_categories.length" style="margin-bottom:10px">
+          <span class="hint">薄弱类别：</span>
+          <span v-for="w in state.summary.weak_categories" :key="w" class="badge bad" style="margin-right:6px">{{ CATEGORY_NAMES[w] || w }}</span>
+        </div>
+        <div v-for="a in state.summary.answers" :key="a.seq" class="detail-item" style="margin-top:10px">
+          <div class="detail-head">
+            <span class="badge">{{ a.seq }}</span>
+            <span class="t" style="font-size:14px">{{ a.question_title }}</span>
+            <span v-if="a.score != null" class="badge" :class="scoreClass(a.score)">{{ a.score }} 分</span>
+          </div>
+          <div class="detail-body">
+            <div class="compare">
+              <div><h4>你的回答</h4><div class="box you" style="max-height:none">{{ a.user_answer || '（未作答）' }}</div></div>
+              <div><h4>满分答案</h4><div class="box model" style="max-height:none" v-html="renderAnswer(a.model_answer)"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+    <p v-if="state.error && !state.loading" class="error">{{ state.error }}</p>
+  </div>
+  `,
+};
+
+/* ---------- 复盘（历史场次） ---------- */
+const SessionsView = {
+  setup() {
+    const state = reactive({ list: [], detail: null, loading: true });
+    async function load() {
+      state.loading = true;
+      state.list = await api('/interviews?limit=50');
+      state.loading = false;
+    }
+    async function openDetail(id) {
+      state.detail = await api(`/interviews/${id}`);
+      window.scrollTo({ top: 0 });
+    }
+    function back() { state.detail = null; }
+    onMounted(load);
+    return { state, openDetail, back, fmtTime, scoreClass, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
+  },
+  template: `
+  <div>
+    <template v-if="!state.detail">
+      <h3 style="margin-bottom:14px">历史面试场次</h3>
+      <div v-if="state.loading" class="card">加载中…</div>
+      <div v-else-if="!state.list.length" class="card empty">还没有面试记录，去开始第一场吧</div>
+      <div v-else class="list-row" v-for="s in state.list" :key="s.id" @click="openDetail(s.id)">
+        <span class="pos">{{ s.position }}</span>
+        <span class="badge" :class="s.status === 'finished' ? 'ok' : s.status === 'abandoned' ? 'gray' : 'warn'">
+          {{ s.status === 'finished' ? '已完成' : s.status === 'abandoned' ? '已放弃' : '进行中' }}</span>
+        <span>{{ s.question_count }} 题</span>
+        <span v-if="s.total_score != null" class="score-big" :class="scoreClass(s.total_score)">{{ s.total_score }}</span>
+        <span class="time">{{ fmtTime(s.started_at) }}</span>
+      </div>
+    </template>
+    <template v-else>
+      <button class="btn small ghost" @click="back">← 返回列表</button>
+      <div class="card" style="margin-top:12px">
+        <div class="score-row">
+          <div>
+            <h3 style="font-size:18px">{{ state.detail.position }}</h3>
+            <span class="hint">{{ state.detail.question_count }} 题 · {{ fmtTime(state.detail.started_at) }}
+              · {{ state.detail.status === 'finished' ? '已完成' : state.detail.status === 'abandoned' ? '已放弃' : '进行中' }}</span>
+          </div>
+          <div v-if="state.detail.total_score != null" class="score-big" :class="scoreClass(state.detail.total_score)" style="margin-left:auto;font-size:28px">{{ state.detail.total_score }}<small style="font-size:13px"> 分</small></div>
+        </div>
+        <div v-if="state.detail.summary" class="summary-box">{{ state.detail.summary }}</div>
+        <div v-if="state.detail.weak_categories && state.detail.weak_categories.length" style="margin-bottom:10px">
+          <span class="hint">薄弱类别：</span>
+          <span v-for="w in state.detail.weak_categories" :key="w" class="badge bad" style="margin-right:6px">{{ CATEGORY_NAMES[w] || w }}</span>
+        </div>
+        <div v-for="a in state.detail.answers" :key="a.seq" class="detail-item">
+          <div class="detail-head">
+            <span class="badge">{{ a.seq }}</span>
+            <span class="badge gray">{{ CATEGORY_NAMES[a.category] || a.category }}</span>
+            <span class="t">{{ a.question_title }}</span>
+            <span v-if="a.score != null" class="badge" :class="scoreClass(a.score)">{{ a.score }} 分</span>
+          </div>
+          <div class="detail-body">
+            <div v-if="a.ai_comment" class="ai-comment">{{ a.ai_comment }}</div>
+            <div class="compare">
+              <div><h4>你的回答</h4><div class="box you" style="max-height:none">{{ a.answered ? (a.user_answer || '（未作答）') : '未作答' }}</div></div>
+              <div><h4>满分答案</h4><div class="box model" style="max-height:none" v-html="renderAnswer(a.answered ? a.model_answer : '（提交后可见）')"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+  `,
+};
+
+/* ---------- 错题本 / 复习 ---------- */
+const ReviewView = {
+  setup() {
+    const state = reactive({
+      loading: true, items: [], queueSize: 0,
+      phase: 'list',           // list | practicing
+      idx: 0, answer: '', revealed: false,
+      mastered: 0, practiced: 0, submitting: false, error: '',
+    });
+    async function load() {
+      state.loading = true;
+      const d = await api('/review/due');
+      state.items = d.items;
+      state.queueSize = d.queue_size;
+      state.loading = false;
+    }
+    function start() {
+      if (!state.items.length) return;
+      state.phase = 'practicing'; state.idx = 0; state.answer = ''; state.revealed = false;
+      state.mastered = 0; state.practiced = 0;
+    }
+    function reveal() { state.revealed = true; }
+    async function judge(correct) {
+      state.submitting = true;
+      try {
+        const it = state.items[state.idx];
+        const r = await api(`/review/${it.id}/answer`, { method: 'POST', body: { correct, user_answer: state.answer } });
+        state.practiced++;
+        if (r.mastered) state.mastered++;
+        state.idx++; state.answer = ''; state.revealed = false;
+        if (state.idx >= state.items.length) { state.phase = 'list'; await load(); }
+      } catch (e) { state.error = e.message; }
+      state.submitting = false;
+    }
+    onMounted(load);
+    const cur = computed(() => state.items[state.idx] || null);
+    return { state, cur, load, start, reveal, judge, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
+  },
+  template: `
+  <div>
+    <div v-if="state.loading" class="card">加载中…</div>
+
+    <template v-else-if="state.phase === 'list'">
+      <div class="card" style="margin-bottom:16px">
+        <h3>错题本 · 遗忘曲线复习</h3>
+        <p class="hint" style="margin-bottom:6px">答错（&lt;60 分）的题自动进入复习队列，间隔 1 → 3 → 7 → 14 天重复出现，连续答对 4 次即掌握移出。</p>
+        <div class="stat-grid" style="max-width:420px">
+          <div class="stat"><b class="warn">{{ state.items.length }}</b><span>现在到期待复习</span></div>
+          <div class="stat"><b>{{ state.queueSize }}</b><span>队列总数</span></div>
+        </div>
+        <div style="margin-top:16px" v-if="state.items.length">
+          <button class="btn primary big" @click="start">开始复习（{{ state.items.length }} 题）→</button>
+        </div>
+      </div>
+      <div v-if="!state.items.length" class="card empty">
+        {{ state.queueSize ? '今天的错题都复习完了，明天再来 💪' : '错题队列为空 —— 答错的题会自动出现在这里' }}
+      </div>
+      <div v-else class="review-list">
+        <div class="item" v-for="it in state.items" :key="it.id">
+          <span class="badge">{{ it.category_name }}</span>
+          <span class="t">{{ it.title }}</span>
+          <span class="stage-dots" :title="'复习进度第 ' + (it.stage + 1) + ' 阶'">
+            <i v-for="n in 4" :key="n" :class="{on: n <= it.stage + 1}"></i>
+          </span>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="progress-wrap">
+        <span class="badge">复习 {{ state.idx + 1 }} / {{ state.items.length }}</span>
+        <div class="progress-track"><div class="progress-fill" :style="{width: state.idx / state.items.length * 100 + '%'}"></div></div>
+        <span class="hint">已掌握 {{ state.mastered }}</span>
+      </div>
+      <div class="card q-card" v-if="cur">
+        <div class="q-meta">
+          <span class="badge">{{ cur.category_name }}</span>
+          <span class="badge gray">难度·{{ DIFF_LABEL[cur.difficulty] }}</span>
+        </div>
+        <div class="q-title">{{ cur.title }}</div>
+      </div>
+      <div class="card" v-if="cur">
+        <template v-if="!state.revealed">
+          <h3>回忆作答（可选）</h3>
+          <textarea v-model="state.answer" class="input" rows="6" placeholder="先凭记忆写下要点，再对照满分答案自查——这一步才是复习的价值"></textarea>
+          <div class="answer-actions">
+            <button class="btn primary" @click="reveal">对照满分答案 →</button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="compare">
+            <div><h4>你的回忆</h4><div class="box you">{{ state.answer || '（没写，纯靠脑内复盘）' }}</div></div>
+            <div><h4>⭐ 满分答案</h4><div class="box model" style="max-height:none" v-html="renderAnswer(cur.model_answer || '（该题暂无满分答案）')"></div></div>
+          </div>
+          <div class="self-judge">
+            <span class="hint" style="align-self:center">这题现在掌握了吗？</span>
+            <button class="btn primary" :disabled="state.submitting" @click="judge(true)">✓ 答对了（间隔拉长）</button>
+            <button class="btn danger" :disabled="state.submitting" @click="judge(false)">✗ 还不行（明天再来）</button>
+          </div>
+        </template>
+      </div>
+      <p v-if="state.error" class="error">{{ state.error }}</p>
+    </template>
+  </div>
+  `,
+};
+
+/* ---------- 题库管理 ---------- */
+const BankView = {
+  setup() {
+    const state = reactive({
+      items: [], total: 0, page: 1, size: 20, loading: true,
+      filters: { category: '', difficulty: '', source: '', q: '' },
+      showForm: false, editingId: null, saving: false, error: '',
+      form: { title: '', category: 'MYSQL', difficulty: 2, tags: '', position_tags: '', model_answer: '' },
+    });
+    async function load() {
+      state.loading = true;
+      const f = state.filters;
+      const qs = new URLSearchParams();
+      if (f.category) qs.set('category', f.category);
+      if (f.difficulty) qs.set('difficulty', f.difficulty);
+      if (f.source) qs.set('source', f.source);
+      if (f.q) qs.set('q', f.q);
+      qs.set('page', state.page); qs.set('size', state.size);
+      const d = await api(`/questions?${qs}`);
+      state.items = d.items; state.total = d.total;
+      state.loading = false;
+    }
+    function resetPage() { state.page = 1; load(); }
+    function openAdd() {
+      state.editingId = null;
+      state.form = { title: '', category: 'MYSQL', difficulty: 2, tags: '', position_tags: '', model_answer: '' };
+      state.showForm = true;
+    }
+    function openEdit(q) {
+      state.editingId = q.id;
+      state.form = {
+        title: q.title, category: q.category, difficulty: q.difficulty,
+        tags: (q.tags || []).join('、'), position_tags: (q.position_tags || []).join('、'),
+        model_answer: q.model_answer,
+      };
+      state.showForm = true;
+    }
+    async function save() {
+      state.saving = true; state.error = '';
+      const body = {
+        title: state.form.title,
+        category: state.form.category,
+        difficulty: Number(state.form.difficulty),
+        tags: state.form.tags.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean),
+        position_tags: state.form.position_tags.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean),
+        model_answer: state.form.model_answer,
+      };
+      try {
+        if (state.editingId) await api(`/questions/${state.editingId}`, { method: 'PUT', body });
+        else await api('/questions', { method: 'POST', body });
+        state.showForm = false;
+        await load();
+      } catch (e) { state.error = e.message; }
+      state.saving = false;
+    }
+    async function del(q) {
+      if (!confirm(`删除题目：${q.title.slice(0, 40)}…？`)) return;
+      try { await api(`/questions/${q.id}`, { method: 'DELETE' }); await load(); }
+      catch (e) { alert(e.message); }
+    }
+    const pages = computed(() => Math.max(1, Math.ceil(state.total / state.size)));
+    onMounted(load);
+    return { state, load, resetPage, openAdd, openEdit, save, del, pages, CATEGORY_NAMES, DIFF_LABEL };
+  },
+  template: `
+  <div>
+    <div class="filter-bar card" style="padding:14px 18px">
+      <select v-model="state.filters.category" class="input" @change="resetPage">
+        <option value="">全部类别</option>
+        <option v-for="(name, code) in CATEGORY_NAMES" :key="code" :value="code">{{ name }}</option>
+      </select>
+      <select v-model="state.filters.difficulty" class="input" @change="resetPage">
+        <option value="">全部难度</option>
+        <option value="1">易</option><option value="2">中</option><option value="3">难</option>
+      </select>
+      <select v-model="state.filters.source" class="input" @change="resetPage">
+        <option value="">全部来源</option>
+        <option value="BUILTIN">内置</option><option value="MANUAL">手动录入</option><option value="AI">AI 生成</option>
+      </select>
+      <input v-model.trim="state.filters.q" class="input grow" placeholder="搜索题目/答案关键词，回车搜索" @keyup.enter="resetPage">
+      <button class="btn primary" @click="openAdd">＋ 录入真题</button>
+    </div>
+
+    <div class="card table-card">
+      <table class="q-table">
+        <thead><tr><th style="width:50px">ID</th><th>题目</th><th style="width:110px">类别</th><th style="width:70px">难度</th><th style="width:90px">来源</th><th style="width:130px">操作</th></tr></thead>
+        <tbody>
+          <tr v-if="state.loading"><td colspan="6" class="empty">加载中…</td></tr>
+          <tr v-else-if="!state.items.length"><td colspan="6" class="empty">没有符合条件的题目</td></tr>
+          <tr v-for="q in state.items" :key="q.id">
+            <td>{{ q.id }}</td>
+            <td class="title-cell" :title="q.title">{{ q.title }}</td>
+            <td><span class="badge">{{ CATEGORY_NAMES[q.category] || q.category }}</span></td>
+            <td>{{ DIFF_LABEL[q.difficulty] }}</td>
+            <td><span class="badge" :class="{gray: q.source !== 'AI', ok: q.source === 'AI'}">{{ q.source === 'BUILTIN' ? '内置' : q.source === 'AI' ? 'AI' : '手动' }}</span></td>
+            <td>
+              <button class="btn small" @click="openEdit(q)">编辑</button>
+              <button class="btn small ghost danger" @click="del(q)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="table-foot">
+        <span>共 {{ state.total }} 题</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn small" :disabled="state.page <= 1" @click="state.page--; load()">上一页</button>
+          <span>{{ state.page }} / {{ pages }}</span>
+          <button class="btn small" :disabled="state.page >= pages" @click="state.page++; load()">下一页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 录入/编辑弹窗 -->
+    <div v-if="state.showForm" class="modal-mask" @click.self="state.showForm = false">
+      <div class="modal">
+        <h3>{{ state.editingId ? '编辑题目' : '录入遇到的面试真题' }}</h3>
+        <div class="form-row">
+          <label>题目 *</label>
+          <textarea v-model="state.form.title" class="input" rows="2" placeholder="面试官的原题，越接近原话越好"></textarea>
+        </div>
+        <div class="grid2">
+          <div class="form-row">
+            <label>类别</label>
+            <select v-model="state.form.category" class="input">
+              <option v-for="(name, code) in CATEGORY_NAMES" :key="code" :value="code">{{ name }}</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>难度</label>
+            <select v-model="state.form.difficulty" class="input">
+              <option value="1">易</option><option value="2">中</option><option value="3">难</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>知识点标签 <span class="hint">顿号或空格分隔</span></label>
+          <input v-model="state.form.tags" class="input" placeholder="索引、事务、B+树">
+        </div>
+        <div class="form-row">
+          <label>满分答案 <span class="hint">当时的回答 + 事后复盘的标准答案，要点式记录</span></label>
+          <textarea v-model="state.form.model_answer" class="input" rows="8" placeholder="1. 要点一&#10;2. 要点二&#10;- 细节补充"></textarea>
+        </div>
+        <p v-if="state.error" class="error">{{ state.error }}</p>
+        <div class="answer-actions">
+          <button class="btn primary" :disabled="!state.form.title || state.saving" @click="save">{{ state.saving ? '保存中…' : '保存' }}</button>
+          <button class="btn ghost" @click="state.showForm = false">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  `,
+};
+
+/* ---------- 设置 ---------- */
+const SettingsView = {
+  setup() {
+    const state = reactive({
+      base_url: '', api_key: '', model: '',
+      enabled: false, masked: '', loading: true,
+      saving: false, testing: false, test: null, saved: false,
+    });
+    async function load() {
+      const s = await api('/settings/llm');
+      state.base_url = s.base_url; state.model = s.model; state.enabled = s.enabled; state.masked = s.api_key_masked;
+      state.loading = false;
+    }
+    async function save() {
+      state.saving = true;
+      try {
+        await api('/settings/llm', { method: 'PUT', body: { base_url: state.base_url, api_key: state.api_key, model: state.model } });
+        state.saved = true; setTimeout(() => state.saved = false, 2000);
+        await load();
+      } catch (e) { alert(e.message); }
+      state.saving = false;
+    }
+    async function test() {
+      state.testing = true; state.test = null;
+      state.test = await api('/settings/llm/test', { method: 'POST' });
+      state.testing = false;
+    }
+    onMounted(load);
+    return { state, save, test };
+  },
+  template: `
+  <div class="card" style="max-width:640px">
+    <h3>LLM 配置（OpenAI 兼容接口）</h3>
+    <div class="status-line">
+      当前状态：
+      <span class="badge" :class="state.enabled ? 'ok' : 'warn'">{{ state.enabled ? '已启用 · AI 出题/评分生效中' : '离线题库模式' }}</span>
+      <span v-if="state.masked" class="hint">密钥 {{ state.masked }}</span>
+    </div>
+    <p class="hint" style="margin-bottom:16px">配置后系统会用 LLM 按岗位生成新题、现场生成满分答案、给你的回答打分点评；不配置也能用（纯内置题库 + 自查模式）。支持 DeepSeek / Kimi / 通义 / OpenAI 等任何 OpenAI 兼容服务。</p>
+    <div v-if="!state.loading">
+      <div class="form-row">
+        <label>Base URL</label>
+        <input v-model.trim="state.base_url" class="input" placeholder="https://api.deepseek.com/v1">
+      </div>
+      <div class="form-row">
+        <label>API Key</label>
+        <input v-model.trim="state.api_key" class="input" type="password" :placeholder="state.masked ? '已保存（留空则沿用 ' + state.masked + '）' : 'sk-...'">
+      </div>
+      <div class="form-row">
+        <label>模型名</label>
+        <input v-model.trim="state.model" class="input" placeholder="deepseek-chat / moonshot-v1-8k / qwen-plus / gpt-4o-mini">
+      </div>
+      <div class="answer-actions">
+        <button class="btn primary" :disabled="state.saving" @click="save">{{ state.saved ? '✓ 已保存' : state.saving ? '保存中…' : '保存配置' }}</button>
+        <button class="btn" :disabled="state.testing" @click="test">{{ state.testing ? '测试中…' : '测试连接' }}</button>
+      </div>
+      <div v-if="state.test" class="ai-comment" :style="{borderColor: state.test.ok ? '#bbf7d0' : '#fecaca', background: state.test.ok ? '#f0fdf4' : '#fef2f2'}">
+        {{ state.test.ok ? '✅ ' : '❌ ' }}{{ state.test.message }}
+      </div>
+      <h3 style="margin-top:28px">说明</h3>
+      <p class="hint" style="line-height:1.9">
+        · 配置保存在 Redis，优先级高于 .env 文件<br>
+        · 出题策略：优先从题库抽题（错题优先重现），题量不足时由 AI 补充新题入库<br>
+        · 离线模式下面试只做「你的回答 vs 满分答案」对比，评分需自查<br>
+        · 所有数据（题库/面试记录）在 MySQL，会话与错题队列在 Redis，均落外置盘
+      </p>
+    </div>
+  </div>
+  `,
+};
+
+/* ---------- 根组件 ---------- */
+const App = {
+  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView },
+  setup() {
+    const view = ref('home');
+    const sessionId = ref(null);
+    const tabs = [
+      { key: 'home', label: '开始面试' },
+      { key: 'sessions', label: '复盘' },
+      { key: 'review', label: '错题本' },
+      { key: 'bank', label: '题库' },
+      { key: 'settings', label: '设置' },
+    ];
+    const health = reactive({ mysql: '', redis: '', llm: '' });
+    const resumeSession = ref(null);
+
+    // 首页表单
+    const position = ref('');
+    const count = ref(10);
+    const categories = ref([]);
+    const picked = ref([]);
+    const starting = ref(false);
+    const error = ref('');
+    const llmEnabled = ref(false);
+    const stats = reactive({});
+    const chart = ref(null);
+    let chartInst = null;
+
+    function go(v) { view.value = v; }
+    function toggleCat(code) {
+      const i = picked.value.indexOf(code);
+      if (i >= 0) picked.value.splice(i, 1); else picked.value.push(code);
+    }
+
+    async function loadHealth() {
+      try {
+        const h = await api('/health');
+        health.mysql = h.mysql === 'ok' ? 'ok' : 'down';
+        health.redis = h.redis === 'ok' ? 'ok' : 'down';
+        health.llm = h.llm === 'on' ? 'ok' : 'off';
+        llmEnabled.value = h.llm === 'on';
+      } catch (e) {
+        health.mysql = health.redis = 'down';
+      }
+    }
+    async function loadMeta() {
+      try {
+        const m = await api('/questions/meta');
+        categories.value = m.categories;
+      } catch (e) { /* 容器未就绪时忽略 */ }
+    }
+    async function loadStats() {
+      try {
+        const s = await api('/stats');
+        Object.assign(stats, s);
+        renderChart();
+      } catch (e) { /* ignore */ }
+    }
+    function renderChart() {
+      nextTick(() => {
+        // v-if 切换会重建元素，不缓存实例，每次按当前元素取
+        const el = document.querySelector('.chart');
+        if (!el || !stats.categories || !stats.categories.length) return;
+        const inst = echarts.getInstanceByDom(el) || echarts.init(el);
+        inst.setOption({
+          grid: { left: 8, right: 16, top: 10, bottom: 0, containLabel: true },
+          xAxis: { type: 'value', max: 100, axisLabel: { color: '#9aa3b8' }, splitLine: { lineStyle: { color: '#eef0f6' } } },
+          yAxis: {
+            type: 'category',
+            data: stats.categories.map(c => c.name).reverse(),
+            axisLabel: { color: '#5b6478' },
+            axisLine: { show: false }, axisTick: { show: false },
+          },
+          series: [{
+            type: 'bar',
+            data: stats.categories.map(c => c.avg_score).reverse(),
+            barWidth: 14,
+            itemStyle: { borderRadius: 8, color: '#4f5df0' },
+            label: { show: true, position: 'right', color: '#5b6478' },
+          }],
+          tooltip: { trigger: 'axis' },
+        });
+      });
+    }    async function checkResume() {
+      try {
+        const list = await api('/interviews?limit=5');
+        resumeSession.value = list.find(s => s.status === 'in_progress') || null;
+      } catch (e) { /* ignore */ }
+    }
+
+    async function startInterview() {
+      starting.value = true; error.value = '';
+      try {
+        const r = await api('/interviews', {
+          method: 'POST',
+          body: { position: position.value, count: count.value, categories: picked.value.length ? picked.value : null },
+        });
+        sessionId.value = r.session_id;
+        view.value = 'interview';
+        resumeSession.value = null;
+      } catch (e) { error.value = e.message; }
+      starting.value = false;
+    }
+    function resumeInterview() { sessionId.value = resumeSession.value.id; resumeSession.value = null; view.value = 'interview'; }
+    async function abandonResume() {
+      if (!confirm('放弃当前进行中的面试？')) return;
+      await api(`/interviews/${resumeSession.value.id}/abandon`, { method: 'POST' });
+      resumeSession.value = null;
+    }
+    function onHome() { view.value = 'home'; resumeSession.value = null; checkResume(); }
+    function onInterviewFinished() { loadStats(); checkResume(); }
+
+    onMounted(() => {
+      loadHealth(); loadMeta(); loadStats(); checkResume();
+    });
+
+    return {
+      view, tabs, health, go, sessionId,
+      position, count, categories, picked, toggleCat, starting, error, llmEnabled,
+      startInterview, stats, chart,
+      resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished,
+    };
+  },
+};
+
+/* 根模板直接使用 index.html 中 #app 的 DOM 结构（vue.global 自带编译器） */
+createApp(App).mount('#app');
