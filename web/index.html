@@ -86,20 +86,17 @@
         </div>
       </section>
 
-      <!-- ============ 面试进行中 ============ -->
-      <interview-view v-else-if="view === 'interview'" :session-id="sessionId" @finished="onInterviewFinished" @abandoned="onHome"></interview-view>
+      <!-- ============ 面试进行中（不缓存：每场新实例，:key 防旧状态残留） ============ -->
+      <interview-view v-else-if="view === 'interview'" :key="sessionId" :session-id="sessionId" @finished="onInterviewFinished" @abandoned="onHome"></interview-view>
 
-      <!-- ============ 复盘 ============ -->
-      <sessions-view v-else-if="view === 'sessions'"></sessions-view>
-
-      <!-- ============ 错题本 ============ -->
-      <review-view v-else-if="view === 'review'"></review-view>
-
-      <!-- ============ 题库管理 ============ -->
-      <bank-view v-else-if="view === 'bank'"></bank-view>
-
-      <!-- ============ 设置 ============ -->
-      <settings-view v-else-if="view === 'settings'"></settings-view>
+      <!-- ============ 管理页（keep-alive 缓存：切 tab 零闪烁，onActivated 静默刷新数据） ============ -->
+      <!-- 注意：DOM 模板必须用 kebab-case <keep-alive>，浏览器会把 <KeepAlive> 小写成 keepalive 导致内置组件不生效 -->
+      <keep-alive v-else include="SessionsView,ReviewView,BankView,SettingsView" :max="8">
+        <sessions-view v-if="view === 'sessions'"></sessions-view>
+        <review-view v-else-if="view === 'review'"></review-view>
+        <bank-view v-else-if="view === 'bank'"></bank-view>
+        <settings-view v-else-if="view === 'settings'" @saved="loadHealth"></settings-view>
+      </keep-alive>
     </main>
 
     <footer class="foot">数据存储：MySQL（题库/记录）+ Redis（会话/错题队列）· 项目目录在外置盘，不占系统盘</footer>

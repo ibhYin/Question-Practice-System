@@ -1,5 +1,5 @@
 /* 面试刷题系统 前端（Vue 3，无构建） */
-const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onActivated, nextTick, watch } = Vue;
 
 /* ---------- API 助手 ---------- */
 async function api(path, opts = {}) {
@@ -231,10 +231,12 @@ const InterviewView = {
 
 /* ---------- 复盘（历史场次） ---------- */
 const SessionsView = {
+  name: 'SessionsView',
   setup() {
     const state = reactive({ list: [], detail: null, loading: true });
     async function load() {
-      state.loading = true;
+      // 已有数据时静默刷新（KeepAlive 激活），仅首次显示加载态
+      state.loading = state.list.length === 0 && !state.detail;
       state.list = await api('/interviews?limit=50');
       state.loading = false;
     }
@@ -244,6 +246,7 @@ const SessionsView = {
     }
     function back() { state.detail = null; }
     onMounted(load);
+    onActivated(() => { if (state.list.length || state.detail) load(); });
     return { state, openDetail, back, fmtTime, scoreClass, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
   },
   template: `
@@ -300,6 +303,7 @@ const SessionsView = {
 
 /* ---------- 错题本 / 复习 ---------- */
 const ReviewView = {
+  name: 'ReviewView',
   setup() {
     const state = reactive({
       loading: true, items: [], queueSize: 0,
@@ -308,7 +312,7 @@ const ReviewView = {
       mastered: 0, practiced: 0, submitting: false, error: '',
     });
     async function load() {
-      state.loading = true;
+      state.loading = state.items.length === 0; // 静默刷新
       const d = await api('/review/due');
       state.items = d.items;
       state.queueSize = d.queue_size;
@@ -333,6 +337,7 @@ const ReviewView = {
       state.submitting = false;
     }
     onMounted(load);
+    onActivated(() => { if (state.phase === 'list') load(); });  // 练习中不打扰
     const cur = computed(() => state.items[state.idx] || null);
     return { state, cur, load, start, reveal, judge, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
   },
@@ -407,6 +412,7 @@ const ReviewView = {
 
 /* ---------- 题库管理 ---------- */
 const BankView = {
+  name: 'BankView',
   setup() {
     const state = reactive({
       items: [], total: 0, page: 1, size: 20, loading: true,
@@ -415,7 +421,7 @@ const BankView = {
       form: { title: '', category: 'MYSQL', difficulty: 2, tags: '', position_tags: '', model_answer: '' },
     });
     async function load() {
-      state.loading = true;
+      state.loading = state.items.length === 0; // 静默刷新
       const f = state.filters;
       const qs = new URLSearchParams();
       if (f.category) qs.set('category', f.category);
@@ -467,6 +473,7 @@ const BankView = {
     }
     const pages = computed(() => Math.max(1, Math.ceil(state.total / state.size)));
     onMounted(load);
+    onActivated(load);
     return { state, load, resetPage, openAdd, openEdit, save, del, pages, CATEGORY_NAMES, DIFF_LABEL };
   },
   template: `
@@ -560,7 +567,9 @@ const BankView = {
 
 /* ---------- 设置 ---------- */
 const SettingsView = {
-  setup() {
+  name: 'SettingsView',
+  emits: ['saved'],
+  setup(_, { emit }) {
     const state = reactive({
       base_url: '', api_key: '', model: '',
       enabled: false, masked: '', loading: true,
@@ -577,6 +586,7 @@ const SettingsView = {
         await api('/settings/llm', { method: 'PUT', body: { base_url: state.base_url, api_key: state.api_key, model: state.model } });
         state.saved = true; setTimeout(() => state.saved = false, 2000);
         await load();
+        emit('saved');  // 通知根组件立即刷新健康徽章，无需手动刷新页面
       } catch (e) { alert(e.message); }
       state.saving = false;
     }
@@ -658,6 +668,33 @@ const App = {
     let chartInst = null;
 
     function go(v) { view.value = v; }
+
+    /* ---- Hash 路由：F5 恢复当前页面 + 浏览器前进后退 ---- */
+    const VIEW_HASH = { home: '#/', sessions: '#/sessions', review: '#/review', bank: '#/bank', settings: '#/settings' };
+    function syncHash() {
+      const target = view.value === 'interview' && sessionId.value
+        ? `#/interview/${sessionId.value}`
+        : (VIEW_HASH[view.value] || '#/');
+      if (location.hash !== target) location.hash = target;
+    }
+    function applyHash() {
+      const h = location.hash || '#/';
+      const m = h.match(/^#\/interview\/(\d+)$/);
+      if (m) {
+        sessionId.value = Number(m[1]);
+        view.value = 'interview';
+        return;
+      }
+      view.value = { '#/': 'home', '#/sessions': 'sessions', '#/review': 'review', '#/bank': 'bank', '#/settings': 'settings' }[h] || 'home';
+      if (view.value !== 'interview') sessionId.value = null;
+    }
+    window.addEventListener('hashchange', applyHash);
+    // 视图/session 变化同步到地址栏
+    watch([view, sessionId], syncHash);
+    // 回到首页即刷新全部首页数据（统计/徽章/概览/resume 条），消灭手动 F5
+    watch(view, (v) => {
+      if (v === 'home') { loadStats(); loadHealth(); loadMeta(); checkResume(); }
+    });
     function toggleCat(code) {
       const i = picked.value.indexOf(code);
       if (i >= 0) picked.value.splice(i, 1); else picked.value.push(code);
@@ -738,17 +775,19 @@ const App = {
       await api(`/interviews/${resumeSession.value.id}/abandon`, { method: 'POST' });
       resumeSession.value = null;
     }
-    function onHome() { view.value = 'home'; resumeSession.value = null; checkResume(); }
-    function onInterviewFinished() { loadStats(); checkResume(); }
+    function onHome() { view.value = 'home'; sessionId.value = null; resumeSession.value = null; }
+    function onInterviewFinished() { loadStats(); checkResume(); loadHealth(); }
 
     onMounted(() => {
+      applyHash();          // 按 URL hash 恢复页面（如刷新前在面试页）
       loadHealth(); loadMeta(); loadStats(); checkResume();
+      setInterval(loadHealth, 30000);  // 健康徽章自动跟随服务状态
     });
 
     return {
       view, tabs, health, go, sessionId,
       position, count, categories, picked, toggleCat, starting, error, llmEnabled,
-      startInterview, stats, chart,
+      startInterview, stats, chart, loadHealth,
       resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished,
     };
   },

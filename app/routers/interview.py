@@ -53,9 +53,11 @@ def get_interview(sid: int, db: DBSession = Depends(get_db)):
 
     qids = session.question_ids or []
     ans_map = {a.question_id: a for a in session.answers}
+    # 一次批量取题，避免逐题 N+1
+    qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
     answers: list[AnswerDetail] = []
     for idx, qid in enumerate(qids):
-        q = db.get(Question, qid)
+        q = qmap.get(qid)
         if not q:
             continue
         a = ans_map.get(qid)

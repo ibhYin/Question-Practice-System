@@ -380,9 +380,13 @@ def category_stats(db: DBSession) -> list[dict]:
 
 def hot_questions(db: DBSession, limit: int = 10) -> list[dict]:
     items = rdb.zrevrange(HOT_KEY, 0, limit - 1, withscores=True)
+    if not items:
+        return []
+    ids = [int(qid) for qid, _ in items]
+    qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(ids)).all()}
     out = []
     for qid, wrong_count in items:
-        q = db.get(Question, int(qid))
+        q = qmap.get(int(qid))
         if q:
             out.append({"id": q.id, "title": q.title, "category": q.category, "wrong_count": int(wrong_count)})
     return out
