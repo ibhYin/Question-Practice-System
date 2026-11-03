@@ -201,7 +201,6 @@ const InterviewView = {
     <template v-else-if="state.phase === 'answering' && state.question">
       <div class="progress-wrap">
         <span class="badge">第 {{ state.question.seq }} / {{ state.total }} 题</span>
-        <span class="hint">⏱ {{ fmtElapsed(state.elapsed) }}</span>
         <div class="progress-track"><div class="progress-fill" :style="{width: (state.question.seq - 1) / state.total * 100 + '%'}"></div></div>
         <button class="btn small ghost danger" @click="abandon">放弃本场</button>
       </div>
@@ -214,7 +213,7 @@ const InterviewView = {
         <div class="q-title">{{ state.question.title }}</div>
       </div>
       <div class="card">
-        <h3>你的回答 <span class="hint">草稿自动保存 · Ctrl+Enter 提交 · 用时 {{ fmtElapsed(state.elapsed) }}</span></h3>
+        <h3>你的回答 <span class="hint">草稿自动保存 · Ctrl+Enter 提交</span></h3>
         <textarea v-model="state.answer" class="input" rows="7"
                   @input="saveDraft" @keydown.ctrl.enter.prevent="submit(false)"
                   placeholder="像真实面试一样，把你知道的点都写出来：概念 → 原理 → 实践…（结构化作答更容易拿分）"></textarea>
