@@ -77,6 +77,7 @@ class AnswerResult(BaseModel):
     seq: int
     score: Optional[int] = None
     ai_comment: Optional[str] = None
+    scoring: bool = False  # true = LLM 异步评分中，前端轮询补显
     user_answer: str
     model_answer: str
     next_question: Optional[QuestionBrief] = None

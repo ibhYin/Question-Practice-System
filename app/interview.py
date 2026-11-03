@@ -2,26 +2,35 @@
 
 Redis 承担：
 - HASH interview:session:{id}  进行中场次的当前进度（TTL 2h，丢失可从 DB 重建）
-- SETNX interview:lock         同一时间仅允许一场进行中
+- SETNX interview:lock         同一时间仅允许一场进行中（带 TTL + 自愈）
 - ZSET question:hot            高频错题榜
 - HASH stats:category          各类别出题数/累计分（cache-aside，可从 MySQL 重建）
 """
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from . import llm, question_bank, review
+from .database import SessionLocal
 from .errors import BizError
 from .models import InterviewAnswer, InterviewSession, Question
 from .redis_client import rdb
 
 SESSION_TTL = 2 * 3600
 LOCK_KEY = "interview:lock"
+LOCK_TTL = 2 * 3600
 HOT_KEY = "question:hot"
 STATS_KEY = "stats:category"
+
+# 异步评分：2 个后台 worker，按场次登记 future，结束时等待收口
+_scoring_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scoring")
+_scoring_futures: dict[int, list] = {}
+_scoring_lock = threading.Lock()
 
 
 def _skey(sid: int) -> str:
@@ -43,9 +52,13 @@ def _brief(question: Question, seq: int) -> dict:
 
 
 def create_interview(db: DBSession, position: str, count: int, categories: list[str] | None) -> dict:
-    if rdb.exists(LOCK_KEY):
-        running_sid = rdb.get(LOCK_KEY)
-        raise BizError(f"已有一场进行中的面试（场次 {running_sid}），请先完成或放弃它")
+    # 锁自愈：遗留锁对应场次已结束/不存在时自动释放，避免"昨天的面试卡死今天"
+    lock_sid = rdb.get(LOCK_KEY)
+    if lock_sid:
+        locked = db.get(InterviewSession, int(lock_sid)) if str(lock_sid).isdigit() else None
+        if locked and locked.status == "in_progress":
+            raise BizError(f"已有一场进行中的面试（场次 {lock_sid}），请先完成或放弃它")
+        rdb.delete(LOCK_KEY)
 
     if categories:
         valid = [c for c in categories if c in question_bank.CATEGORIES]
@@ -58,7 +71,7 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
     picked = question_bank.pick_questions(db, weights, count)
     used_llm = False
 
-    # 题量不足且配置了 LLM：AI 生成新题并入库（source=AI）
+    # 题量不足且配置了 LLM：AI 生成新题干入库（满分答案在答题时按需生成，避免创建面试长时间等待）
     if len(picked) < count and llm.is_enabled():
         need = count - len(picked)
         recent_titles = [
@@ -92,12 +105,8 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
                 tags=nq.get("tags") or [],
                 position_tags=[profile_name],
                 source="AI",
-                model_answer="",
+                model_answer="",  # 懒生成：提交答案时按需生成满分答案
             )
-            try:
-                q.model_answer = llm.generate_model_answer(q.title, q.category)
-            except Exception:
-                pass
             db.add(q)
             picked.append(q)
             used_llm = True
@@ -119,7 +128,7 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
     db.commit()
 
     _set_state(session.id, 0, session.question_ids)
-    rdb.set(LOCK_KEY, str(session.id))
+    rdb.set(LOCK_KEY, str(session.id), ex=LOCK_TTL)  # 带 TTL：崩溃/遗忘不会永久锁死
 
     return {
         "session_id": session.id,
@@ -162,6 +171,42 @@ def _rebuild_state(db: DBSession, session: InterviewSession) -> dict:
 # ---------- 答题 ----------
 
 
+def _score_in_background(answer_id: int, category: str, title: str,
+                         model_answer: str, user_answer: str, count_stats: bool) -> None:
+    """后台评分线程：LLM 评分 → 写回答案行 → 更新统计（仅新建答题计数）"""
+    try:
+        result = llm.evaluate_answer(title, model_answer, user_answer)
+        score, comment = result["score"], result["comment"]
+    except Exception:
+        # 评分失败：留提示，前端轮询到 null 后提示自查
+        db = SessionLocal()
+        try:
+            ans = db.get(InterviewAnswer, answer_id)
+            if ans and ans.score is None:
+                ans.ai_comment = "评分暂时不可用，请对照满分答案自查；重新提交答案可再次评分。"
+                db.commit()
+        finally:
+            db.close()
+        return
+
+    db = SessionLocal()
+    try:
+        ans = db.get(InterviewAnswer, answer_id)
+        if not ans:
+            return
+        ans.score, ans.ai_comment = score, comment
+        db.commit()
+        if count_stats:
+            if score < 60:
+                review.add_wrong(ans.question_id)
+                rdb.zincrby(HOT_KEY, 1, str(ans.question_id))
+            rdb.hincrby(STATS_KEY, f"{category}:count", 1)
+            if score:
+                rdb.hincrby(STATS_KEY, f"{category}:score", score)
+    finally:
+        db.close()
+
+
 def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -> dict:
     session = db.get(InterviewSession, sid)
     if not session:
@@ -178,6 +223,17 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
     if not question:
         raise BizError("题目不存在", 404)
 
+    # P0-4 越题防护：只能按顺序作答（重答已答过的题允许）
+    answered_count = (
+        db.query(func.count(InterviewAnswer.id))
+        .filter(InterviewAnswer.session_id == sid)
+        .scalar()
+        or 0
+    )
+    seq = qids.index(question_id) + 1
+    if seq > answered_count + 1:
+        raise BizError("请按顺序作答，不能跳到后面的题")
+
     # 满分答案：题库存的优先，缺了且 LLM 可用则现场生成并回填题库
     model_answer = question.model_answer or ""
     if not model_answer and llm.is_enabled():
@@ -187,59 +243,62 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
         except Exception:
             model_answer = ""
 
-    # 评分（有 LLM 才有）
-    score: int | None = None
-    comment: str | None = None
-    if llm.is_enabled():
-        if not user_answer.strip():
-            score, comment = 0, "未作答。这题先记住满分答案的框架，明天复习时再练一遍。"
-        else:
-            try:
-                result = llm.evaluate_answer(question.title, model_answer, user_answer)
-                score, comment = result["score"], result["comment"]
-            except Exception:
-                score, comment = None, None  # LLM 抖动时降级为仅对比模式
-    elif not user_answer.strip():
-        # 离线模式下直接跳过 = 不会，记 0 分进错题本；作答了则由用户自行复盘
-        score, comment = 0, "未作答（离线模式）。先记住满分答案的框架，明天复习时再练。"
-
-    # 落库（同一题重复提交则覆盖）
+    # 落库（同一题重复提交则覆盖，不重复计数）
     ans = (
         db.query(InterviewAnswer)
         .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == question_id)
         .first()
     )
-    seq = qids.index(question_id) + 1
+    created = ans is None
     if ans:
         ans.user_answer = user_answer
-        ans.model_answer = model_answer
-        ans.score = score
-        ans.ai_comment = comment
         ans.answered_at = datetime.now()
     else:
-        db.add(
-            InterviewAnswer(
-                session_id=sid,
-                question_id=question_id,
-                seq=seq,
-                user_answer=user_answer,
-                model_answer=model_answer,
-                score=score,
-                ai_comment=comment,
-            )
+        ans = InterviewAnswer(
+            session_id=sid,
+            question_id=question_id,
+            seq=seq,
+            user_answer=user_answer,
+            model_answer=model_answer,
         )
-    db.commit()
+        db.add(ans)
 
-    # 错题进遗忘曲线队列 + 高频错题榜；类别统计累加
-    if score is not None:
-        if score < 60:
-            review.add_wrong(question_id)
-            rdb.zincrby(HOT_KEY, 1, str(question_id))
-        cat_key = f"{question.category}:count"
-        score_key = f"{question.category}:score"
-        rdb.hincrby(STATS_KEY, cat_key, 1)
-        if score:
-            rdb.hincrby(STATS_KEY, score_key, score)
+    score: int | None = None
+    comment: str | None = None
+    scoring_async = False
+
+    if llm.is_enabled() and user_answer.strip():
+        # P1 异步评分：先落库并立即返回对比，分数后台写回（前端轮询补显）
+        scoring_async = True
+        ans.model_answer = model_answer
+        db.commit()
+        future = _scoring_executor.submit(
+            _score_in_background,
+            ans.id,
+            question.category,
+            question.title,
+            model_answer,
+            user_answer,
+            created and session.mode != "REVIEW",
+        )
+        with _scoring_lock:
+            _scoring_futures.setdefault(sid, []).append(future)
+    else:
+        if not user_answer.strip():
+            score = 0
+            comment = "未作答。先记住满分答案的框架，明天复习时再练一遍。"
+        # 无 LLM 且有作答：留空自查（离线模式）
+        ans.score = score
+        ans.ai_comment = comment
+        ans.model_answer = model_answer
+        db.commit()
+        if created and score is not None and session.mode != "REVIEW":
+            if score < 60:
+                review.add_wrong(question_id)
+                rdb.zincrby(HOT_KEY, 1, str(question_id))
+            rdb.hincrby(STATS_KEY, f"{question.category}:count", 1)
+            if score:
+                rdb.hincrby(STATS_KEY, f"{question.category}:score", score)
 
     # 推进进度
     answered = (
@@ -255,10 +314,27 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
         "seq": seq,
         "score": score,
         "ai_comment": comment,
+        "scoring": scoring_async,
         "user_answer": user_answer,
         "model_answer": model_answer,
         "next_question": next_question,
         "finished": finished,
+    }
+
+
+def get_answer_score(db: DBSession, sid: int, question_id: int) -> dict:
+    """轮询异步评分结果"""
+    ans = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == question_id)
+        .first()
+    )
+    if not ans:
+        raise BizError("未找到该答题记录", 404)
+    return {
+        "score": ans.score,
+        "ai_comment": ans.ai_comment,
+        "pending": ans.score is None and llm.is_enabled(),
     }
 
 
@@ -269,6 +345,15 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
     session = db.get(InterviewSession, sid)
     if not session:
         raise BizError("面试场次不存在", 404)
+
+    # 等待本场次的异步评分收口，保证总评完整（超时 90s 后按已出分数计算）
+    with _scoring_lock:
+        futures = _scoring_futures.pop(sid, [])
+    for f in futures:
+        try:
+            f.result(timeout=90)
+        except Exception:
+            pass
 
     if session.status == "in_progress":
         answers = (
@@ -345,7 +430,8 @@ def category_stats(db: DBSession) -> list[dict]:
         rows = (
             db.query(
                 Question.category,
-                func.count(InterviewAnswer.id),
+                # 只统计有分数的作答（离线模式 score 为 NULL 不计入平均分口径）
+                func.count(InterviewAnswer.score),
                 func.avg(InterviewAnswer.score),
             )
             .join(InterviewAnswer, InterviewAnswer.question_id == Question.id)
@@ -394,3 +480,61 @@ def hot_questions(db: DBSession, limit: int = 10) -> list[dict]:
 
 def session_started_at(session: InterviewSession) -> str:
     return session.started_at.isoformat() if session.started_at else ""
+
+
+# ---------- 导出 ----------
+
+
+def export_markdown(db: DBSession, sid: int) -> str:
+    session = db.get(InterviewSession, sid)
+    if not session:
+        raise BizError("面试场次不存在", 404)
+
+    qids = session.question_ids or []
+    ans_map = {a.question_id: a for a in session.answers}
+    qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
+
+    kind = "错题练习" if session.mode == "REVIEW" else "模拟面试"
+    lines = [
+        f"# 面试复盘：{session.position}",
+        "",
+        f"- 场次：#{session.id}（{kind}）",
+        f"- 题数：{session.question_count}",
+    ]
+    if session.finished_at:
+        lines.append(
+            f"- 时间：{session.started_at:%Y-%m-%d %H:%M} ~ {session.finished_at:%H:%M}"
+        )
+    else:
+        lines.append(f"- 开始时间：{session.started_at:%Y-%m-%d %H:%M}")
+    if session.total_score is not None:
+        lines.append(f"- 总分：**{session.total_score}**")
+    lines.append("")
+
+    if session.summary:
+        lines += ["## 总评", "", session.summary, ""]
+    if session.weak_categories:
+        weak = "、".join(question_bank.CATEGORY_NAMES.get(c, c) for c in session.weak_categories)
+        lines += [f"**薄弱方向**：{weak}", ""]
+
+    lines += ["---", ""]
+    for idx, qid in enumerate(qids, 1):
+        q = qmap.get(qid)
+        if not q:
+            continue
+        a = ans_map.get(qid)
+        lines.append(f"## 第 {idx} 题 · {question_bank.CATEGORY_NAMES.get(q.category, q.category)}")
+        lines.append("")
+        lines.append(f"**{q.title}**")
+        lines.append("")
+        if a:
+            if a.score is not None:
+                lines += [f"> 得分：**{a.score}**", ""]
+            lines += ["**我的回答**：", "", a.user_answer or "（未作答）", ""]
+            lines += ["**满分答案**：", "", a.model_answer or "（未生成）", ""]
+            if a.ai_comment:
+                lines += [f"**AI 点评**：{a.ai_comment}", ""]
+        else:
+            lines += ["（未作答）", ""]
+        lines += ["---", ""]
+    return "\n".join(lines)

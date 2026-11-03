@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
 
 from .. import review as review_svc
 from ..database import get_db
 from ..errors import BizError
-from ..models import Question
+from ..models import InterviewSession, Question
 from ..question_bank import CATEGORY_NAMES
 from ..redis_client import rdb
 from ..schemas import ReviewAnswerIn
+
+
+class ReviewSessionIn(BaseModel):
+    ids: list[int] = Field(min_length=1)
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -23,6 +28,7 @@ def _to_item(db: DBSession, qid: int, stage: int | None = None) -> dict | None:
         "category_name": CATEGORY_NAMES.get(q.category, q.category),
         "difficulty": q.difficulty,
         "tags": q.tags or [],
+        "model_answer": q.model_answer,
         "stage": stage if stage is not None else review_svc.stage_of(qid),
     }
 
@@ -47,6 +53,25 @@ def upcoming_questions(db: DBSession = Depends(get_db)):
         if item:
             items.append(item)
     return {"items": items}
+
+
+@router.post("/session")
+def start_review_session(body: ReviewSessionIn, db: DBSession = Depends(get_db)):
+    """把一轮错题练习登记为 REVIEW 场次（复用答题记录/复盘机制）"""
+    ids = list(dict.fromkeys(body.ids))  # 去重保序
+    if not ids:
+        raise BizError("练习题目列表为空")
+    if len(ids) > 30:
+        raise BizError("单轮练习最多 30 题")
+    session = InterviewSession(
+        position="错题复习",
+        mode="REVIEW",
+        question_count=len(ids),
+        question_ids=ids,
+    )
+    db.add(session)
+    db.commit()
+    return {"session_id": session.id, "total": len(ids)}
 
 
 @router.post("/{qid}/add")

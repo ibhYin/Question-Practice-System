@@ -12,7 +12,8 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-time-zone=+08:00
     ports:
-      - "3306:3306"
+      # 只绑定本机回环，避免数据库暴露到局域网
+      - "127.0.0.1:3306:3306"
     volumes:
       # 项目数据落外置盘项目目录，不占系统盘
       - ./data/mysql:/var/lib/mysql
@@ -27,7 +28,7 @@ services:
     container_name: interview-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - ./data/redis:/data
     command: ["redis-server", "--appendonly", "yes"]

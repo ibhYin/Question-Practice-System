@@ -5,6 +5,7 @@
 """
 
 import json
+import time
 
 import httpx
 
@@ -46,11 +47,24 @@ def _chat(messages: list[dict], temperature: float = 0.6, timeout: int = 90) -> 
         raise RuntimeError("LLM 未配置")
     body = {"model": cfg["model"], "messages": messages, "temperature": temperature}
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
-    resp = httpx.post(
-        f"{cfg['base_url']}/chat/completions", json=body, headers=headers, timeout=timeout
-    )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    # 网络抖动/网关 5xx 重试一次；4xx（如 key 无效）不重试
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            resp = httpx.post(
+                f"{cfg['base_url']}/chat/completions", json=body, headers=headers, timeout=timeout
+            )
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"LLM 网关 {resp.status_code}", request=resp.request, response=resp
+                )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            last_exc = e
+            if attempt == 0:
+                time.sleep(1)
+    raise last_exc  # type: ignore[misc]
 
 
 def test_connection() -> str:
@@ -140,13 +154,21 @@ def evaluate_answer(title: str, model_answer: str, user_answer: str) -> dict:
         "请按满分 100 分打分，并给出简短点评（先说答到了什么，再说遗漏什么，最后一句建议）。\n"
         '返回 JSON：{"score": 75, "comment": "..."}，comment 控制在 120 字内。'
     )
-    text = _chat(
-        [{"role": "system", "content": EVAL_SYSTEM}, {"role": "user", "content": user}],
-        temperature=0.2,
-    )
-    data = _parse_json(text)
-    score = max(0, min(100, int(data.get("score", 0))))
-    comment = str(data.get("comment", "")).strip()
+    messages = [
+        {"role": "system", "content": EVAL_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+    data = None
+    for attempt in range(2):  # JSON 解析失败重试一次
+        text = _chat(messages, temperature=0.2)
+        try:
+            data = _parse_json(text)
+            break
+        except ValueError:
+            if attempt == 1:
+                raise
+    score = max(0, min(100, int(data.get("score", 0))))  # type: ignore[union-attr]
+    comment = str(data.get("comment", "")).strip()  # type: ignore[union-attr]
     return {"score": score, "comment": comment}
 
 

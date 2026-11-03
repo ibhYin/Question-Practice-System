@@ -1,5 +1,5 @@
 /* 面试刷题系统 前端（Vue 3，无构建） */
-const { createApp, ref, reactive, computed, onMounted, onActivated, nextTick, watch } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onActivated, onUnmounted, nextTick, watch } = Vue;
 
 /* ---------- API 助手 ---------- */
 async function api(path, opts = {}) {
@@ -45,6 +45,11 @@ function scoreClass(s) {
 }
 
 /* ---------- 面试进行中 ---------- */
+function fmtElapsed(sec) {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 const InterviewView = {
   props: ['sessionId'],
   emits: ['finished', 'abandoned'],
@@ -60,7 +65,58 @@ const InterviewView = {
       phase: 'answering',    // answering | result | summary
       summary: null,
       llmEnabled: false,
+      elapsed: 0,            // 本题答题秒数
+      timerId: null,
+      pollTimer: null,       // 异步评分轮询
+      pollTries: 0,
     });
+
+    function startTimer() {
+      state.elapsed = 0;
+      if (state.timerId) clearInterval(state.timerId);
+      state.timerId = setInterval(() => { state.elapsed++; }, 1000);
+    }
+    function stopTimer() {
+      if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
+    }
+
+    /* 草稿：按 场次+题目 存 localStorage，刷新/崩溃不丢答案 */
+    const draftKey = () => state.question ? `draft:${props.sessionId}:${state.question.id}` : '';
+    function restoreDraft() {
+      try {
+        const saved = localStorage.getItem(draftKey());
+        state.answer = saved || '';
+      } catch (e) { state.answer = ''; }
+    }
+    function saveDraft() {
+      try { localStorage.setItem(draftKey(), state.answer); } catch (e) { /* 忽略 */ }
+    }
+    function clearDraft() {
+      try { localStorage.removeItem(draftKey()); } catch (e) { /* 忽略 */ }
+    }
+
+    /* 异步评分轮询：每 2s 查一次，最多 45 次（90s） */
+    function pollScore() {
+      if (state.pollTimer) clearInterval(state.pollTimer);
+      state.pollTries = 0;
+      state.pollTimer = setInterval(async () => {
+        state.pollTries++;
+        if (state.pollTries > 45 || state.phase !== 'result') {
+          clearInterval(state.pollTimer); state.pollTimer = null;
+          if (state.result) state.result.scoring = false;
+          return;
+        }
+        try {
+          const r = await api(`/interviews/${props.sessionId}/answers/${state.result.question_id}/score`);
+          if (r.score != null || (!r.pending && state.pollTries > 6)) {
+            state.result.score = r.score;
+            state.result.ai_comment = r.ai_comment;
+            state.result.scoring = false;
+            clearInterval(state.pollTimer); state.pollTimer = null;
+          }
+        } catch (e) { /* 网络抖动继续轮询 */ }
+      }, 2000);
+    }
 
     async function loadProgress() {
       try {
@@ -74,6 +130,8 @@ const InterviewView = {
           state.total = p.total;
           state.current = p.current || 0;
           state.llmEnabled = p.llm_enabled;
+          restoreDraft();
+          startTimer();
         }
       } catch (e) { state.error = e.message; }
       state.loading = false;
@@ -86,9 +144,12 @@ const InterviewView = {
           method: 'POST',
           body: { question_id: state.question.id, user_answer: skip ? '' : state.answer },
         });
+        stopTimer();
+        clearDraft();
         state.result = r;
         state.current = r.seq;
         state.phase = 'result';
+        if (r.scoring) pollScore();   // 异步评分：立即展示对比，分数轮询补显
       } catch (e) { state.error = e.message; }
       state.submitting = false;
     }
@@ -100,6 +161,8 @@ const InterviewView = {
       state.result = null;
       state.addedReview = false;
       state.phase = 'answering';
+      restoreDraft();
+      startTimer();
     }
 
     async function addToReview() {
@@ -126,8 +189,9 @@ const InterviewView = {
     }
 
     onMounted(loadProgress);
+    onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, renderAnswer, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -137,6 +201,7 @@ const InterviewView = {
     <template v-else-if="state.phase === 'answering' && state.question">
       <div class="progress-wrap">
         <span class="badge">第 {{ state.question.seq }} / {{ state.total }} 题</span>
+        <span class="hint">⏱ {{ fmtElapsed(state.elapsed) }}</span>
         <div class="progress-track"><div class="progress-fill" :style="{width: (state.question.seq - 1) / state.total * 100 + '%'}"></div></div>
         <button class="btn small ghost danger" @click="abandon">放弃本场</button>
       </div>
@@ -149,8 +214,9 @@ const InterviewView = {
         <div class="q-title">{{ state.question.title }}</div>
       </div>
       <div class="card">
-        <h3>你的回答</h3>
+        <h3>你的回答 <span class="hint">草稿自动保存 · Ctrl+Enter 提交 · 用时 {{ fmtElapsed(state.elapsed) }}</span></h3>
         <textarea v-model="state.answer" class="input" rows="7"
+                  @input="saveDraft" @keydown.ctrl.enter.prevent="submit(false)"
                   placeholder="像真实面试一样，把你知道的点都写出来：概念 → 原理 → 实践…（结构化作答更容易拿分）"></textarea>
         <div class="answer-actions">
           <button class="btn primary" :disabled="state.submitting" @click="submit(false)">{{ state.submitting ? '提交中…' : (state.llmEnabled ? '提交本题（AI 评分）' : '提交本题，看满分答案') }}</button>
@@ -167,13 +233,17 @@ const InterviewView = {
         <div class="progress-track"><div class="progress-fill" :style="{width: state.result.seq / state.total * 100 + '%'}"></div></div>
       </div>
       <div class="card result-panel">
+        <div class="score-row">
           <div v-if="state.result.score != null">
             <div class="score-ring" :class="scoreClass(state.result.score)"
                  :style="{background: state.result.score >= 80 ? '#16a34a' : state.result.score >= 60 ? '#d97706' : '#dc2626'}">
               {{ state.result.score }}<small style="font-size:11px;font-weight:400">分</small>
             </div>
           </div>
+          <div v-else-if="state.result.scoring" class="badge warn" style="align-self:center; padding: 8px 16px">AI 评分中…</div>
           <div v-if="state.result.ai_comment" style="font-weight:600">AI 点评</div>
+          <div v-else-if="state.result.scoring" class="hint" style="align-self:center">评分完成后自动显示，可先点下一题继续</div>
+        </div>
         <div v-if="state.result.ai_comment" class="ai-comment">{{ state.result.ai_comment }}</div>
         <div class="compare">
           <div>
@@ -246,9 +316,10 @@ const SessionsView = {
       window.scrollTo({ top: 0 });
     }
     function back() { state.detail = null; }
+    function exportMd() { window.open('/api/interviews/' + state.detail.id + '/export'); }
     onMounted(load);
     onActivated(() => { if (state.list.length || state.detail) load(); });
-    return { state, openDetail, back, fmtTime, scoreClass, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
+    return { state, openDetail, back, exportMd, fmtTime, scoreClass, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
   },
   template: `
   <div>
@@ -258,6 +329,7 @@ const SessionsView = {
       <div v-else-if="!state.list.length" class="card empty">还没有面试记录，去开始第一场吧</div>
       <div v-else class="list-row" v-for="s in state.list" :key="s.id" @click="openDetail(s.id)">
         <span class="pos">{{ s.position }}</span>
+        <span v-if="s.mode === 'REVIEW'" class="badge gray">错题练习</span>
         <span class="badge" :class="s.status === 'finished' ? 'ok' : s.status === 'abandoned' ? 'gray' : 'warn'">
           {{ s.status === 'finished' ? '已完成' : s.status === 'abandoned' ? '已放弃' : '进行中' }}</span>
         <span>{{ s.question_count }} 题</span>
@@ -267,10 +339,12 @@ const SessionsView = {
     </template>
     <template v-else>
       <button class="btn small ghost" @click="back">← 返回列表</button>
+      <button class="btn small" style="margin-left:8px" @click="exportMd">⬇ 导出笔记 (Markdown)</button>
       <div class="card" style="margin-top:12px">
         <div class="score-row">
           <div>
-            <h3 style="font-size:18px">{{ state.detail.position }}</h3>
+            <h3 style="font-size:18px">{{ state.detail.position }}
+              <span v-if="state.detail.mode === 'REVIEW'" class="badge gray" style="font-size:12px">错题练习</span></h3>
             <span class="hint">{{ state.detail.question_count }} 题 · {{ fmtTime(state.detail.started_at) }}
               · {{ state.detail.status === 'finished' ? '已完成' : state.detail.status === 'abandoned' ? '已放弃' : '进行中' }}</span>
           </div>
@@ -310,7 +384,8 @@ const ReviewView = {
       loading: true, items: [], queueSize: 0,
       phase: 'list',           // list | practicing
       idx: 0, answer: '', revealed: false,
-      mastered: 0, practiced: 0, submitting: false, error: '',
+      mastered: 0, practiced: 0, recorded: 0, rsid: null,
+      submitting: false, error: '',
     });
     async function load() {
       state.loading = state.items.length === 0; // 静默刷新
@@ -319,21 +394,41 @@ const ReviewView = {
       state.queueSize = d.queue_size;
       state.loading = false;
     }
-    function start() {
+    async function start() {
       if (!state.items.length) return;
       state.phase = 'practicing'; state.idx = 0; state.answer = ''; state.revealed = false;
-      state.mastered = 0; state.practiced = 0;
+      state.mastered = 0; state.practiced = 0; state.recorded = 0; state.error = '';
+      try {
+        // 登记为 REVIEW 场次：练习作答进复盘，LLM 开启时自动评分
+        const rs = await api('/review/session', { method: 'POST', body: { ids: state.items.map(i => i.id) } });
+        state.rsid = rs.session_id;
+      } catch (e) { state.rsid = null; }
     }
     function reveal() { state.revealed = true; }
     async function judge(correct) {
       state.submitting = true;
       try {
         const it = state.items[state.idx];
+        // 1. 队列更新（自我判定驱动遗忘曲线）
         const r = await api(`/review/${it.id}/answer`, { method: 'POST', body: { correct, user_answer: state.answer } });
+        // 2. 练习记录落库（REVIEW 场次，LLM 开启时后台评分）
+        if (state.rsid) {
+          try {
+            await api(`/interviews/${state.rsid}/answers`, { method: 'POST', body: { question_id: it.id, user_answer: state.answer } });
+            state.recorded++;
+          } catch (e) { /* 记录失败不打断复习 */ }
+        }
         state.practiced++;
         if (r.mastered) state.mastered++;
         state.idx++; state.answer = ''; state.revealed = false;
-        if (state.idx >= state.items.length) { state.phase = 'list'; await load(); }
+        if (state.idx >= state.items.length) {
+          if (state.rsid) {
+            try { await api(`/interviews/${state.rsid}/finish`, { method: 'POST', body: {} }); } catch (e) { /* 忽略 */ }
+            state.rsid = null;
+          }
+          state.phase = 'list';
+          await load();
+        }
       } catch (e) { state.error = e.message; }
       state.submitting = false;
     }
@@ -349,7 +444,7 @@ const ReviewView = {
     <template v-else-if="state.phase === 'list'">
       <div class="card" style="margin-bottom:16px">
         <h3>错题本 · 遗忘曲线复习</h3>
-        <p class="hint" style="margin-bottom:6px">答错（&lt;60 分）的题自动进入复习队列，间隔 1 → 3 → 7 → 14 天重复出现，连续答对 4 次即掌握移出。</p>
+        <p class="hint" style="margin-bottom:6px">答错（&lt;60 分）的题自动进入复习队列，间隔 1 → 3 → 7 → 14 天重复出现，连续答对 4 次即掌握移出。练习作答会保存到复盘（可开启 LLM 自动评分）。</p>
         <div class="stat-grid" style="max-width:420px">
           <div class="stat"><b class="warn">{{ state.items.length }}</b><span>现在到期待复习</span></div>
           <div class="stat"><b>{{ state.queueSize }}</b><span>队列总数</span></div>
@@ -692,8 +787,9 @@ const App = {
     window.addEventListener('hashchange', applyHash);
     // 视图/session 变化同步到地址栏
     watch([view, sessionId], syncHash);
-    // 回到首页即刷新全部首页数据（统计/徽章/概览/resume 条），消灭手动 F5
+    const VIEW_TITLES = { home: '开始面试', interview: '面试中', sessions: '复盘', review: '错题本', bank: '题库', settings: '设置' };
     watch(view, (v) => {
+      document.title = (VIEW_TITLES[v] ? VIEW_TITLES[v] + ' · ' : '') + '面试刷题系统';
       if (v === 'home') { loadStats(); loadHealth(); loadMeta(); checkResume(); }
     });
     function toggleCat(code) {
@@ -753,7 +849,7 @@ const App = {
     }    async function checkResume() {
       try {
         const list = await api('/interviews?limit=5');
-        resumeSession.value = list.find(s => s.status === 'in_progress') || null;
+        resumeSession.value = list.find(s => s.status === 'in_progress' && s.mode !== 'REVIEW') || null;
       } catch (e) { /* ignore */ }
     }
 

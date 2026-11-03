@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
@@ -35,6 +36,7 @@ def list_interviews(limit: int = 20, db: DBSession = Depends(get_db)):
         {
             "id": s.id,
             "position": s.position,
+            "mode": s.mode,
             "question_count": s.question_count,
             "status": s.status,
             "total_score": s.total_score,
@@ -80,6 +82,7 @@ def get_interview(sid: int, db: DBSession = Depends(get_db)):
     return {
         "id": session.id,
         "position": session.position,
+        "mode": session.mode,
         "status": session.status,
         "question_count": session.question_count,
         "total_score": session.total_score,
@@ -105,6 +108,23 @@ def finish_interview(sid: int, db: DBSession = Depends(get_db)):
 @router.post("/{sid}/abandon")
 def abandon_interview(sid: int, db: DBSession = Depends(get_db)):
     return interview_svc.finish_interview(db, sid, abandoned=True)
+
+
+@router.get("/{sid}/answers/{qid}/score")
+def get_answer_score(sid: int, qid: int, db: DBSession = Depends(get_db)):
+    """轮询异步评分结果（scoring=true 期间前端每 2s 调一次）"""
+    return interview_svc.get_answer_score(db, sid, qid)
+
+
+@router.get("/{sid}/export")
+def export_interview(sid: int, db: DBSession = Depends(get_db)):
+    """导出整场复盘为 Markdown 笔记"""
+    md = interview_svc.export_markdown(db, sid)
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="interview-{sid}.md"'},
+    )
 
 
 @router.get("/{sid}/progress")
