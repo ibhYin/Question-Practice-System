@@ -36,10 +36,11 @@
 
 ## 数据安全
 
+**智能备份（默认开启，无需配置）**：应用启动、结束面试、录入/删除题目时自动检查——距上次备份超过 24 小时就在后台静默备份一次。所有数据变更都发生在应用运行时，所以"用过应用就有 ≤24h 新鲜度的恢复点"，不依赖电脑几点开机、不需要定时任务。
+
 ```bash
-./scripts/backup.sh    # mysqldump 全库 → data/backups/（gzip，保留 10 份）
-# 建议加入 crontab 每日自动备份：
-#   0 2 * * * /path/to/MySQL+Redis/scripts/backup.sh >> /tmp/interview_backup.log 2>&1
+./scripts/backup.sh    # 手动立即备份（mysqldump 全库 → data/backups/，gzip，保留 10 份）
+ls data/backups/       # 查看已有备份
 ```
 
 MySQL/Redis 端口只绑定 127.0.0.1，不暴露局域网。

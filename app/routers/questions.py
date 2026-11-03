@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from .. import interview as interview_svc
 from .. import review as review_svc
+from ..backup import maybe_backup
 from ..database import get_db
 from ..errors import BizError
 from ..models import InterviewAnswer, Question
@@ -65,6 +66,7 @@ def create_question(body: QuestionCreate, db: DBSession = Depends(get_db)):
     db.add(question)
     db.commit()
     invalidate_category_cache(question.category)
+    maybe_backup()  # 录入真题 = 高价值数据变化
     return QuestionOut.model_validate(question).model_dump()
 
 
@@ -102,6 +104,7 @@ def delete_question(qid: int, db: DBSession = Depends(get_db)):
     rdb.hdel(review_svc.REVIEW_STAGE, str(qid))
     rdb.zrem(interview_svc.HOT_KEY, str(qid))
     invalidate_category_cache(question.category)
+    maybe_backup()
     return {"deleted": qid}
 
 

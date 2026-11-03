@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .backup import maybe_backup
 from .database import Base, engine
 from .errors import BizError
 from .llm import is_enabled
@@ -18,6 +19,8 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 async def lifespan(_app: FastAPI):
     # 启动时自动建表（本项目规模不做 migration）
     Base.metadata.create_all(bind=engine)
+    # 智能备份：距上次备份超过 24h 则后台静默备份（用过应用就有新鲜恢复点）
+    maybe_backup()
     yield
 
 

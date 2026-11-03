@@ -21,6 +21,9 @@ echo "==> 备份 $DB_NAME → $FILE"
 docker exec interview-mysql mysqldump -u"$DB_USER" -p"$DB_PASS" \
     --single-transaction --routines --triggers "$DB_NAME" | gzip > "$FILE"
 
+# 同步智能备份的时间戳，避免 24h 内被自动任务重复备份
+docker exec interview-redis redis-cli SET backup:last_ts "$(date +%s)" >/dev/null 2>&1 || true
+
 SIZE=$(du -h "$FILE" | cut -f1)
 echo "    完成（$SIZE）"
 

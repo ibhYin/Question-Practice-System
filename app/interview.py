@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from . import llm, question_bank, review
+from .backup import maybe_backup
 from .database import SessionLocal
 from .errors import BizError
 from .models import InterviewAnswer, InterviewSession, Question
@@ -400,6 +401,8 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
         session.status = "abandoned" if abandoned else "finished"
         session.finished_at = datetime.now()
         db.commit()
+        # 面完一场 = 数据变化峰值，触发智能备份（24h 内自动去重）
+        maybe_backup()
 
     # 释放会话状态与全场锁
     rdb.delete(_skey(sid))
