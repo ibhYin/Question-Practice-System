@@ -1,13 +1,17 @@
 """题库服务：岗位→类别权重映射、抽题策略、Redis 抽题池缓存。"""
 
 import random
+import re
 
 from sqlalchemy.orm import Session as DBSession
 
 from .models import InterviewAnswer, Question
 from .redis_client import rdb
 
-CATEGORIES = ["MYSQL", "REDIS", "JAVA", "JVM", "CONCURRENT", "SPRING", "NETWORK", "SCENARIO"]
+CATEGORIES = [
+    "MYSQL", "REDIS", "JAVA", "JVM", "CONCURRENT", "SPRING", "NETWORK", "SCENARIO",
+    "AI_APP", "AGENT", "FULLSTACK",
+]
 
 CATEGORY_NAMES = {
     "MYSQL": "MySQL",
@@ -18,6 +22,9 @@ CATEGORY_NAMES = {
     "SPRING": "Spring",
     "NETWORK": "计算机网络",
     "SCENARIO": "场景设计",
+    "AI_APP": "AI 应用开发",
+    "AGENT": "Agent 开发",
+    "FULLSTACK": "全栈开发",
 }
 
 # 各岗位画像：类别 -> 出题权重
@@ -30,15 +37,30 @@ PROFILES = {
     "dba": {"MYSQL": 5, "REDIS": 4, "NETWORK": 1, "SCENARIO": 1},
     "test": {"MYSQL": 2, "REDIS": 2, "NETWORK": 1, "SCENARIO": 2},
     "frontend": {"NETWORK": 2, "SCENARIO": 2, "MYSQL": 1},
+    "ai_app": {"AI_APP": 5, "AGENT": 2, "MYSQL": 2, "REDIS": 2, "SCENARIO": 2, "NETWORK": 1},
+    "agent": {"AGENT": 5, "AI_APP": 3, "MYSQL": 1, "REDIS": 1, "SCENARIO": 2},
+    "fullstack": {"FULLSTACK": 5, "MYSQL": 2, "REDIS": 2, "NETWORK": 2, "SCENARIO": 1},
     "default": {"MYSQL": 3, "REDIS": 3, "NETWORK": 1, "SCENARIO": 1},
 }
 
 
 def match_profile(position: str) -> tuple[str, dict]:
-    """岗位文本 -> (画像名, 类别权重)。注意匹配顺序：javascript 要先于 java。"""
+    """岗位文本 -> (画像名, 类别权重)。
+    注意匹配顺序：javascript/fullstack 先于 java；agent/ai 先于含"开发"的兜底分支。
+    """
     p = position.lower()
     if "前端" in p or "frontend" in p or "javascript" in p or "vue" in p or "react" in p:
         return "frontend", PROFILES["frontend"]
+    if "全栈" in p or "fullstack" in p or "full stack" in p or "full-stack" in p:
+        return "fullstack", PROFILES["fullstack"]
+    if "agent" in p or "智能体" in p:
+        return "agent", PROFILES["agent"]
+    if (
+        re.search(r"(?<![a-z0-9])ai(?![a-z0-9])", p)  # \b 对中文失效，改用 ASCII 字符边界
+        or "大模型" in p or "llm" in p or "aigc" in p or "nlp" in p
+        or "机器学习" in p or "深度学习" in p or "人工智能" in p
+    ):
+        return "ai_app", PROFILES["ai_app"]
     if "java" in p or "spring" in p or "j2ee" in p:
         return "java", PROFILES["java"]
     if "golang" in p or "go语言" in p or " go " in p:

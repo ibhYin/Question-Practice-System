@@ -17,6 +17,7 @@ async function api(path, opts = {}) {
 const CATEGORY_NAMES = {
   MYSQL: 'MySQL', REDIS: 'Redis', JAVA: 'Java 基础', JVM: 'JVM',
   CONCURRENT: '并发编程', SPRING: 'Spring', NETWORK: '计算机网络', SCENARIO: '场景设计',
+  AI_APP: 'AI 应用开发', AGENT: 'Agent 开发', FULLSTACK: '全栈开发',
 };
 const DIFF_LABEL = { 1: '易', 2: '中', 3: '难' };
 const DIFF_COLOR = { 1: 'ok', 2: 'warn', 3: 'bad' };

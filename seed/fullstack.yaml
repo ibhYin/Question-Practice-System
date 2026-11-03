@@ -1,0 +1,373 @@
+# 全栈开发经典面试题
+- title: "前后端分离是什么？和传统模板渲染（如 JSP/Thymeleaf）相比的优缺点？"
+  difficulty: 1
+  tags: ["前后端分离", "架构"]
+  position_tags: ["fullstack", "frontend", "java", "python"]
+  answer: |
+    1. **模式对比**：
+       - **模板渲染**：服务端把数据填进 HTML 模板直接返回页面——首屏快、SEO 天然友好、简单场景开发快；但前后端耦合在同一工程，交互重的页面整页刷新体验差；
+       - **前后端分离**：后端只提供 JSON API，前端独立工程（SPA/MPA）通过接口取数渲染——职责清晰、前后端并行开发、一套 API 服务多端（Web/App/小程序）。
+    2. **分离的代价**：首屏白屏（需要 SSR/SSG 优化）、SEO 要额外处理（预渲染/SSR）、跨域 CORS 要配置、接口文档和联调协作成本、鉴权复杂化（Cookie→Token）。
+    3. **技术栈典型组合**：Vue/React + Axios + REST/GraphQL API；部署上前端静态资源走 CDN/Nginx，后端独立扩容。
+    4. **怎么选**：内容型网站（官网、电商商品页，重 SEO）考虑 SSR 或模板；后台管理系统/工具型应用（登录后使用）纯分离最舒服。
+    5. **加分点**：提 BFF（Backend for Frontend）——多端场景下加一层聚合适配层，让"前端要的接口形状"和"微服务的领域接口"解耦。
+
+- title: "RESTful API 设计有哪些规范？举几个你坚持的设计原则。"
+  difficulty: 1
+  tags: ["RESTful", "API设计"]
+  position_tags: ["fullstack", "backend", "java", "python"]
+  answer: |
+    1. **资源与动词**：URL 表示资源（名词、复数：/users/42/orders），HTTP 方法表达操作——GET 读（安全幂等）、POST 建、PUT 全量改（幂等）、PATCH 部分改、DELETE 删（幂等）。避免 /getUser、/deleteOrder 这种动词进 URL。
+    2. **版本与路径**：URI 或 Header 带版本（/api/v1/），层级表达从属（/users/42/orders），最深两层，再深用查询参数。
+    3. **状态码语义化**：200 成功 / 201 已创建 / 204 无内容 / 400 参数错 / 401 未认证 / 403 无权限 / 404 不存在 / 409 冲突 / 422 校验失败 / 429 限流 / 500 服务端错。**不要 200 包错误码**（code=200, success=false 是反模式，网关和监控全瞎）。
+    4. **统一响应与错误结构**：`{code, message, data}` 或错误时 RFC 7807 problem+json；错误信息给人看也便于排查（带 traceId）。
+    5. **我坚持的原则**：
+       - 分页、排序、过滤用查询参数（?page=1&size=20&sort=-created_at）；
+       - 幂等设计：创建类接口支持客户端生成的 requestId 防重复提交；
+       - 时间传 ISO 8601 / 时间戳（带时区语义），枚举传值不传序号；
+       - 响应字段按需裁剪或提供 fields 参数，不无脑返回全量。
+    6. **加分点**：提 GraphQL 的取舍——按需取数解决过度/不足获取，但缓存、限流、复杂度治理成本高，多数场景 REST + 裁剪够用。
+
+- title: "JWT 和 Session-Cookie 的区别？各适合什么场景？"
+  difficulty: 2
+  tags: ["认证", "JWT", "Session"]
+  position_tags: ["fullstack", "backend", "java"]
+  answer: |
+    1. **Session-Cookie**：登录后服务端存会话（内存/Redis），下发 session_id 到 Cookie；请求带 Cookie，服务端查会话。**状态在服务端**。
+       - 优点：可主动踢人下线（删 session 即可）、会话数据可变、Cookie 同源自动携带；实现成熟；
+       - 缺点：分布式要集中存储（Redis）、有状态、跨域/跨端（App）不便、CSRF 要防。
+    2. **JWT**：登录后签发令牌（Header.Payload.Signature，签名防篡改），客户端保存（localStorage/内存），请求时带 Authorization: Bearer。**状态在客户端**。
+       - 优点：无状态，服务端不存会话天然水平扩展、跨端通用（App/小程序/开放 API）、可携带声明（角色、过期）；
+       - 缺点：**签发后无法主动作废**（登出/踢人/改权限要等自然过期）——需要黑名单就变回有状态；令牌大（每请求都传）；Payload 只是 Base64 不是加密，不能放敏感数据。
+    3. **实践正解（混合）**：短命 access token（15min~2h）+ 长命 refresh token（存库/Redis，可吊销，只用于换发）——兼得无状态验证和可控吊销。小程序/App 多用 token，同域 Web 用 Cookie（配 SameSite 防 CSRF）更省心。
+    4. **加分点**：JWT 的"无法作废"不是缺陷是设计取舍，讲清楚怎么用短过期 + refresh 轮换 + 黑名单缓解；提 SameSite=Lax/Strict 的 CSRF 抑制作用。
+
+- title: "OAuth 2.0 授权码模式流程讲一下？PKCE 是什么、解决什么问题？"
+  difficulty: 3
+  tags: ["OAuth", "授权", "PKCE"]
+  position_tags: ["fullstack", "backend"]
+  answer: |
+    1. **授权码模式（最常用、最安全）四步**：
+       - 用户点"用 GitHub 登录"→ 跳转授权页，带上 client_id、redirect_uri、scope、state（防 CSRF 的随机串）、response_type=code；
+       - 用户同意 → 平台重定向回 redirect_uri 并带一次性 **code**（有效期几分钟）；
+       - **后端**拿 code + client_secret 换 access_token（这一步在服务端，密钥不暴露给前端）；
+       - 用 access_token 调用资源 API（/user/info）拿用户身份，完成登录/注册。
+    2. **为什么绕一道 code**：token 不经过浏览器 URL/前端，且换 token 要 client_secret（服务端持有），防中间人和令牌泄露。
+    3. **PKCE（扩展，公开客户端标配）**：前端/移动端没有 client_secret 可存，授权码可能被恶意 App 截获。PKCE 让客户端先生成 code_verifier，其哈希 code_challenge 随授权请求发出，换 token 时必须出示原 verifier——**截获 code 的人没有 verifier 依然换不到 token**。现在 GitHub/Google 对前端应用都推荐/强制 PKCE。
+    4. **概念辨析（高频追问）**：OAuth 2.0 是**授权**框架（ delegated authorization，"授权访问我的资源"），不是认证协议；**OIDC** 在 OAuth 之上加了 id_token 才是认证（登录）标准——"用 GitHub 登录"严格说是 OIDC。
+    5. **加分点**：state 防 CSRF、refresh token 轮换、redirect_uri 白名单严格匹配（历史上 OAuth 漏洞重灾区）。
+
+- title: "SSO 单点登录怎么设计？CAS 和 token 方案有什么区别？"
+  difficulty: 3
+  tags: ["SSO", "单点登录", "认证"]
+  position_tags: ["fullstack", "backend"]
+  answer: |
+    1. **需求本质**：一次登录，访问集团所有子系统免登录；一处登出全局失效。
+    2. **CAS 流程（传统 Web，Cookie 驱动）**：
+       - 访问业务系统 A 未登录 → 重定向到认证中心（同父域，认得全局票据 cookie）；
+       - 认证中心登录后种 TGC（全局 Cookie），发一次性 ticket 回 A → A 用 ticket 到认证中心验证 → 建立本地会话；
+       - 访问系统 B 时，认证中心的 TGC Cookie 还在，直接发票据，**用户无感**。登出时通知各子系统销毁会话。
+       - 适合：内部系统、同域/可控域的企业环境（统一门户）。
+    3. **Token/OIDC 方案（现代，token 驱动）**：认证中心即 IdP（OIDC/OAuth2），各系统作为依赖方；登录后各系统持有自己的 access token；登出靠 token 过期 + 前端清 token（或 back-channel logout 通知）。适合：跨域、App、第三方接入。
+    4. **通用设计要点**：
+       - 会话与票据的安全属性：一次性票据、短有效期、HTTPS、签名防伪造；
+       - 登出一致性：全局登出协议（front-channel/back-channel）是难点，token 方案天然弱一点；
+       - 多 IdP/社交登录聚合（GitHub + 企业 LDAP + 手机号）统一收敛到同一账号体系（账号绑定）。
+    5. **加分点**：提"SSO 的本质是把认证域收敛到一处 + 各系统用安全方式换取本地会话"，方案差异只是票据传递载体（Cookie vs Token）。
+
+- title: "CORS 是什么？预检请求（OPTIONS）是怎么回事？怎么正确配置？"
+  difficulty: 2
+  tags: ["CORS", "跨域", "浏览器安全"]
+  position_tags: ["fullstack", "frontend", "backend"]
+  answer: |
+    1. **背景**：浏览器的**同源策略**默认禁止页面里的 XHR/fetch 读取跨源响应（协议/域名/端口任一不同即跨源）。CORS（跨源资源共享）是 W3C 标准，让**服务端声明**允许哪些源访问，浏览器据此放行。
+    2. **两种请求**：
+       - **简单请求**：GET/POST/HEAD + 安全头部（Content-Type 限 form/text），浏览器直接发送，带 Origin 头；服务端返回 `Access-Control-Allow-Origin` 匹配则放行，否则浏览器拦截（注意：请求已到达服务端，是浏览器不给 JS 看响应）；
+       - **预检请求（Preflight）**：非简单请求（带 Authorization、JSON 的 Content-Type、PUT/DELETE 等）触发——浏览器先发 **OPTIONS** 询问"这个源、这些头、这个方法允许吗"，服务端返回允许的策略（含 `Access-Control-Allow-Methods/Headers/Max-Age`），通过后才发真实请求。**预检是浏览器行为，curl/Postman/服务端调用没有预检**。
+    3. **配置要点**：
+       - `Access-Control-Allow-Origin` 不能为 `*` 且携带凭证时——带 Cookie 时必须精确指定源 + `Allow-Credentials: true`；
+       - `Allow-Headers` 要包含前端实际带的（Authorization、Content-Type）；
+       - `Max-Age` 设长一点（如 86400）减少预检频率；
+       - 不要写成反射任意 Origin（等于白名单失效漏洞）。
+    4. **常见坑**：Nginx 和后端都配 CORS 导致响应头重复（浏览器报错 multiple values）；OPTIONS 请求被鉴权拦截返回 401——预检必须放行。
+    5. **加分点**：提替代方案——开发期 Vite 代理（同源转发绕开跨域）、生产 Nginx 反代同域部署；JSONP 已是历史（只支持 GET）。
+
+- title: "XSS 攻击的原理和分类？怎么系统防御？"
+  difficulty: 2
+  tags: ["XSS", "安全", "前端"]
+  position_tags: ["fullstack", "frontend", "backend"]
+  answer: |
+    1. **原理**：攻击者把恶意脚本注入页面，在其他用户的浏览器执行——窃取 Cookie/token、伪造请求、钓鱼改页面。
+    2. **三类**：
+       - **存储型**：恶意脚本存进数据库（评论区、个人资料），每个访问者都执行——危害最大；
+       - **反射型**：恶意代码在 URL 参数里，服务端把它拼进响应（搜索回显），诱导点击特制链接；
+       - **DOM 型**：纯前端问题——JS 把不可信数据写进 DOM（innerHTML、document.write、eval），不发服务端。
+    3. **防御体系（分层）**：
+       - **输入输出双管**：输入校验（长度/格式/白名单）+ **输出转义**（按上下文：HTML 实体、JS 字符串、URL 编码——不同位置转义规则不同，这是难点）；
+       - **框架默认安全**：React/Vue 的插值 `{{ }}` 自动转义，**禁止 v-html/dangerouslySetInnerHTML 直插富文本**（必须先过白名单清理，如 DOMPurify）；
+       - **CSP（内容安全策略）**：`Content-Security-Policy` 限制脚本来源（script-src 'self'），让注入的内联脚本无法执行——纵深防御大招；
+       - **Cookie 加固**：HttpOnly（JS 读不到，防窃取）+ Secure + SameSite；
+       - **富文本场景**：服务端白名单过滤标签和属性（on* 事件、javascript: 伪协议全杀）。
+    4. **加分点**：CSP 的 nonce 模式；提"CSP 是最后防线不是替代转义"；说明 HttpOnly 只防窃取不防页面内伪造请求。
+
+- title: "CSRF 攻击原理？和 XSS 的区别？有哪些防御手段？"
+  difficulty: 2
+  tags: ["CSRF", "安全"]
+  position_tags: ["fullstack", "backend", "frontend"]
+  answer: |
+    1. **原理**：利用浏览器"向某站点发请求会自动带 Cookie"的特性——用户登录着 bank.com，访问恶意网站，其中的 `<img src="bank.com/transfer?to=hacker&amount=1000">` 或自动提交的表单，**借用户浏览器之手**发出带登录态的请求。服务器看到合法 Cookie 就执行了。
+    2. **与 XSS 的区别**：XSS 是在目标站点执行脚本（注入执行，能干一切）；CSRF 不执行脚本，只是**冒用用户身份发请求**（借刀杀人）。XSS 能做的事 CSRF 做不了（读响应、执行任意逻辑）。
+    3. **防御**：
+       - **CSRF Token**：服务端下发随机 token（每次会话/表单），提交必须携带——恶意站点拿不到 token，请求被拒（经典有效）；
+       - **SameSite Cookie**：`SameSite=Lax/Strict` 限制跨站请求携带 Cookie，现代浏览器默认 Lax 已挡掉大部分场景（低成本首选）；
+       - **校验 Origin/Referer**：检查请求来源头是否合法域（简单但 Referer 可能被策略剥掉）；
+       - **不用 Cookie 而用 Authorization Header**：token 方式天然免疫 CSRF（跨站请求不会自动带头）——前后端分离 + token 的隐性安全红利；
+       - 敏感操作二次验证（密码/验证码）。
+    4. **关键理解**：CSRF 只在"凭证自动携带"（Cookie/NTLM）时成立；GET 保持纯读（不改状态）让 img 注入类攻击失效。
+
+- title: "浏览器从输入 URL 到页面渲染完成的完整过程？（渲染关键路径）"
+  difficulty: 2
+  tags: ["浏览器渲染", "关键路径", "性能"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **网络阶段**：DNS 解析（递归查询，浏览器/系统缓存逐级命中）→ TCP 三次握手 → TLS 握手（HTTPS）→ 发 HTTP 请求 → 服务端响应 HTML。
+    2. **解析与渲染管线（关键路径）**：
+       - **HTML → DOM 树**：字节 → 字符 → Token → 节点树，**增量解析**（边下载边解析）；
+       - **CSS → CSSOM**：遇到样式资源解析为样式树（CSSOM 必须完整才能用）；
+       - **合成 Render Tree**：DOM + CSSOM 合并，剔除 display:none；
+       - **Layout（回流）**：计算每个节点的几何位置大小；
+       - **Paint（重绘）**：绘制像素到图层；
+       - **Composite（合成）**：图层合并上屏（transform/opacity 走合成器线程，绕过主线程——动画优化原理）。
+    3. **JS 的特殊性**：`<script>` 默认阻塞 DOM 解析（可能读 DOM/改 DOM），`async` 下载完立即执行（乱序）、`defer` DOM 解析完按序执行；JS 还可能触发样式计算，所以 CSS+JS 会互相放大阻塞。
+    4. **性能优化抓手**（对应管线）：首屏关键 CSS 内联、CSS 放头 JS 放尾/defer、减少回流（批量改样式、用 transform 代替 top/left、避免强制同步布局 layout thrashing）、虚拟列表减节点数、图片懒加载。
+    5. **加分点**：讲清**回流必然重绘、重绘不一定回流**；提 composite-only 动画和 will-change；提 CRP 指标（FCP/LCP）与管线阶段的对应关系。
+
+- title: "虚拟 DOM 是什么？diff 算法的关键优化有哪些？"
+  difficulty: 2
+  tags: ["虚拟DOM", "diff", "Vue", "React"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **是什么**：用 JS 对象描述真实 DOM 树（tag/props/children），数据变化时生成新虚拟树，**新旧 diff 找最小变更集**，再一次性 patch 到真实 DOM——把昂贵的 DOM 操作收敛为"对比 + 批量更新"，并提供声明式编程模型（你描述状态对应的 UI，框架算怎么改）。
+    2. **diff 的假设基础（同层比较）**：跨层级移动节点极少见，只做**同层级对比**——把 O(n³) 的树对比降到 O(n)。
+    3. **关键优化**：
+       - **类型相同才复用**：不同类型节点（div→span）直接销毁重建，不深比；
+       - **列表 key**：同层列表用 key 标识身份——有 key 能识别"移动/增删"，复用节点只改位置；**用 index 当 key 在增删/排序时会错乱复用**（输入框内容串行、状态错位的经典 bug）；key 要稳定唯一（业务 id）；
+       - **组件级短路**：React.memo/shouldComponentUpdate、Vue 的响应式依赖收集，让子树跳过 diff；
+       - **批处理**：同一事件循环内的多次 setState 合并一次 diff。
+    4. **Vue 与 React 差异**：Vue 基于响应式系统精确知道哪个组件变了（组件级更新起点小）；React 自顶向下递归 diff 靠 memo 跳过；Vue3 静态提升/patch flag（编译期标记动态部分，diff 时只比对动态节点）。
+    5. **加分点**：虚拟 DOM ≠ 更快——手写原生 DOM 操作理论最快，虚拟 DOM 买的是**可维护性和"够好的性能"下限**；Svelte 无虚拟 DOM 的编译时方案是另一条路。
+
+- title: "Vue 和 React 的响应式原理有什么区别？"
+  difficulty: 3
+  tags: ["Vue", "React", "响应式"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **Vue3：依赖追踪（推 push 模型）**：
+       - 组件 setup 时渲染函数读取数据 → **Proxy 的 getter 拦截**把"当前渲染副作用"记录为该数据的依赖（effect 与依赖的映射）；
+       - 数据变更 → setter/trigger 通知所有依赖的 effect 重新执行 → 精确到"哪个组件的哪个渲染函数需要重跑"；
+       - 组件级更新粒度 + 编译期 patch flag，运行时只比对动态部分——**改谁更新谁，天然细粒度**。
+    2. **React：重渲染整个组件（拉 pull 模型）**：
+       - setState 只标记"这个组件脏了"，调度器在事件循环末尾**从该组件起整棵子树重新渲染**（执行函数组件拿新 vdom，diff）；
+       - 不知道具体哪份数据变了——所以需要手动 memo/useMemo/useCallback 告诉它"这部分没变可以跳过"；
+       - Fiber 架构把渲染拆成可中断的小单元，配合并发特性（useTransition）调度优先级。
+    3. **心智模型差异**：Vue"数据变了 UI 自动跟着变"（响应式自动追踪）；React "UI = f(state) 的重新执行"（不可变数据 + 每次重算）。由此派生习惯差异：Vue 直接改 ref.value/对象属性；React 必须不可变更新（展开新对象）。
+    4. **权衡**：Vue 自动追踪省心但有响应式边界（解构丢失响应、ref/reactive 使用心智）；React 显式可预测但优化责任在人（忘 memo 就过度渲染）。
+    5. **加分点**：Vue3 用 Proxy（Vue2 defineProperty 的缺陷：新增属性/数组下标监听不到要靠 $set，Proxy 全解决）；React 并发渲染的价值（长任务可中断，输入不掉帧）。
+
+- title: "前端状态管理怎么选？什么时候需要全局状态？"
+  difficulty: 2
+  tags: ["状态管理", "Pinia", "Redux"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **先分类状态**：
+       - **组件本地状态**（表单输入、弹窗开关）→ ref/useState，根本不该进全局；
+       - **跨组件共享状态**（登录用户、主题、多页共用的列表筛选）→ 才需要状态管理或提升/Provide；
+       - **服务端状态**（接口数据缓存）→ React Query/SWR、Vue 的 useQuery 类方案，**别手塞进全局 store 再自己维护 loading/缓存/失效**——这是最常见的误用；
+       - **URL 状态**（页码、tab、搜索词）→ 放路由参数，可分享可回退。
+    2. **方案图谱**：
+       - Vue：**Pinia**（官方推荐，模块化 store、TS 友好、devtools）；
+       - React：轻量 Zustand/Jotai（原子化），重型 Redux Toolkit（中间件生态、时间旅行、大型团队规范）；
+       - Context 只解决"传递"不解决"性能"（value 变化全树重渲染），高频更新场景别用 Context 当状态管理。
+    3. **何时需要全局**：多个不相关组件读写同一状态、状态要跨页面持久（tab 切换恢复）、需要统一拦截（登录态过期跳转）。
+    4. **实践原则**：**状态放得越近越好**（就近原则）；全局 store 只放真正的应用级状态（用户/权限/主题），业务数据让服务端状态库管；store 设计按领域切模块不按组件切。
+    5. **加分点**：提状态管理的本质是"可预测的共享读写 + 变更可追踪"；吐槽"把一切都塞 Redux"的反模式。
+
+- title: "HTTP 缓存机制：强缓存和协商缓存的区别？Cache-Control 怎么配？"
+  difficulty: 2
+  tags: ["HTTP缓存", "性能", "强缓存"]
+  position_tags: ["fullstack", "frontend", "backend"]
+  answer: |
+    1. **强缓存（不发请求）**：
+       - `Cache-Control: max-age=31536000`（优先级高于 Expires）；
+       - 缓存未过期时浏览器直接用本地缓存，**连请求都不发**，DevTools 显示 200 (from disk/memory cache)；
+       - `immutable` 配合长缓存，刷新也不校验；`no-cache` 是"可缓存但每次要协商"（不是不缓存！），`no-store` 才是彻底不存。
+    2. **协商缓存（发请求验证）**：
+       - `Last-Modified/If-Modified-Since`（秒级精度，修改时间变了内容没变会误判）；
+       - `ETag/If-None-Match`（内容哈希，优先级更高）——没变则返回 **304** 无 body，省流量。
+    3. **经典部署策略（必会）**：
+       - 带**内容哈希**的静态资源（app.a3f9c2.js）：`Cache-Control: public, max-age=31536000, immutable`——文件名变=缓存失效，可以放心缓存一年；
+       - **index.html**：`Cache-Control: no-cache`（每次协商，保证用户第一时间拿到新版本引用）；
+       - **API**：按数据特性（用户信息短缓存、配置类长缓存）或 no-store。
+    4. **私有与共享**：`private`（仅浏览器，如个性化 API 响应）vs `public`（CDN 可存，静态资源）。
+    5. **加分点**：提 service worker（可编程缓存层、离线可用）；提 CDN 回源与缓存键（query 变了缓存就失效）；"缓存失效的两难：HTML 要新、带 hash 的资源要旧缓存命中"这套组合拳能讲清就赢了。
+
+- title: "WebSocket、SSE、轮询怎么选？各自的适用场景？"
+  difficulty: 2
+  tags: ["WebSocket", "SSE", "实时通信"]
+  position_tags: ["fullstack", "backend", "frontend"]
+  answer: |
+    1. **轮询/长轮询**：
+       - 短轮询：定时发请求（每 5s 查一次）——实现最简单，但大量空查询、延迟取决于间隔；
+       - 长轮询：服务端 hold 住请求直到有数据或超时——延迟低很多，但每次都有完整的 HTTP 开销，连接管理繁琐（老的实时方案，IM 时代主力）。
+    2. **SSE（Server-Sent Events）**：
+       - HTTP 长连接上的**服务器单向推送**（text/event-stream 帧），浏览器 EventSource 自动重连；
+       - 只能服务器→客户端、纯文本、HTTP/1.1 下同域连接数有限制（6 个）；
+       - **单向推送场景的最优解**：LLM 流式输出、消息通知、行情推送、进度条——简单可靠，天然过网关和代理。
+    3. **WebSocket**：
+       - 独立协议的双向全双工长连接（Upgrade 握手），帧开销小；
+       - **双向高频场景**：聊天、协同编辑、多人游戏、实时交易下单；
+       - 代价：断线重连/心跳要自己做（消息确认、补偿重连后拉取）、网关/Nginx 要配 Upgrade、鉴权麻烦（握手是 HTTP，之后无 Header）。
+    4. **选型口诀**：单向推送用 SSE，双向互动用 WS，低频变更用轮询/长轮询完全够；**别用 WS 做只需要 SSE 的事**（复杂度白付）。
+    5. **加分点**：提水平扩展的公共难题——WS/SSE 连接落在哪台机器，消息就要能路由到它（Redis pub/sub 广播、消息队列）；提 HTTP/2 多路复用对 SSE 连接数限制的缓解。
+
+- title: "Node.js 的事件循环讲一下？它为什么适合 IO 密集但不适合 CPU 密集？"
+  difficulty: 2
+  tags: ["Node.js", "事件循环", "异步"]
+  position_tags: ["fullstack", "frontend", "backend"]
+  answer: |
+    1. **架构**：Node 是单线程（JS 执行）+ libuv 事件循环 + 线程池（IO/加密/dns）。所有 IO 交给底层异步执行，JS 线程只处理回调——**一个线程服务成千上万连接**（不需要每连接一线程的内存和切换开销）。
+    2. **循环六阶段**（libuv）：
+       - **timers**：到期的 setTimeout/setInterval；
+       - **pending callbacks**：系统操作回调；
+       - **poll**：取新的 IO 事件，执行 IO 回调（时间大头）；
+       - **check**：setImmediate；
+       - **close callbacks**；
+       - 每阶段之间清空 **microtask 队列**（Promise.then、queueMicrotask、process.nextTick 优先级更高）。
+    3. **执行顺序经典题**：同步代码 → nextTick → Promise 微任务 → setTimeout（宏任务）→ setImmediate；`setTimeout(fn,0)` 与 setImmediate 的顺序在主模块里不确定（取决于进入 poll 的时机），但在 IO 回调里 setImmediate 必先。
+    4. **为什么不适合 CPU 密集**：JS 线程被长计算占住，事件循环停摆——**所有请求全部阻塞**（一个 100ms 的同步计算就把并发打残）。应对：worker_threads（真线程跑计算）、拆分任务用 setImmediate 让出、子进程、或干脆下沉到其他服务。
+    5. **加分点**：Node 的"单线程"指 JS 执行层，libuv 线程池默认 4 条（UV_THREADPOOL_SIZE）；提 Node 18+ 的 fetch/全局 timer 变化不必展开，把"为什么高并发 IO 快"讲透最重要。
+
+- title: "生产环境前端部署架构怎么设计？Nginx 在其中扮演什么角色？"
+  difficulty: 2
+  tags: ["部署", "Nginx", "CI/CD"]
+  position_tags: ["fullstack", "backend", "frontend"]
+  answer: |
+    1. **典型链路**：CI（push 触发 lint/test/build，产物带 hash）→ CDN（静态资源全球加速 + 长缓存）→ Nginx（入口反代）→ 前端静态托管 + 后端 API 上游。
+    2. **Nginx 的职责清单**：
+       - **静态资源服务**：root 指向 dist，`try_files $uri /index.html` 支持 SPA 路由（history 模式刷新不 404）；gzip/brotli 压缩；带 hash 资源设长缓存、index.html 设 no-cache；
+       - **反向代理**：`location /api/` proxy_pass 到后端集群——隐藏真实服务、统一入口、解决跨域（同域部署）；
+       - **负载均衡**：upstream 多后端实例，轮询/最少连接/ip_hash，配合健康检查摘除故障节点；
+       - **TLS 终结**：HTTPS 证书在 Nginx 卸载，HTTP/2、HSTS、限流（limit_req 防刷）、请求体大小限制。
+    3. **发布策略**：
+       - **灰度/蓝绿**：两套环境切流量；或按 cookie/比例灰度；
+       - **原子切换**：软链/版本目录切换（current → releases/v123），秒级回滚；
+       - 前后端解耦部署：前端纯静态随时发，后端独立滚动更新。
+    4. **安全细节**：只开 80/443；管理端口不暴露公网；隐藏版本号 server_tokens off。
+    5. **加分点**：提 Docker 化部署（前端镜像 = nginx + dist）；提"回滚速度是部署方案的第一考核指标"。
+
+- title: "CI/CD 流水线怎么设计？你们的发布流程是怎样的？"
+  difficulty: 2
+  tags: ["CI/CD", "DevOps"]
+  position_tags: ["fullstack", "backend", "frontend"]
+  answer: |
+    1. **CI（持续集成，每次 push 触发）**：
+       - 代码检查：lint（ESLint/Ruff）→ 类型检查（tsc/mypy）→ 单元测试 → 覆盖率阈值卡点；
+       - 构建产物：前端 build 出带 hash 的 dist；后端打镜像（**多阶段构建**减小体积）并推 registry，镜像 tag 用 git sha；
+       - 全程并行加速（lint/test/build 分 job），失败即阻断合并（配合 MR/PR 保护分支 + code review）。
+    2. **CD（持续部署/交付）**：
+       - **测试环境**：合并 main 自动部署，跑冒烟测试 + e2e；
+       - **生产发布**：手动审批门禁 → 灰度发布（先 5% 流量）→ 观察指标（错误率/延迟/业务）→ 全量；任何异常一键回滚（镜像 tag 回退）；
+       - 数据库变更单独管理（migration 先行且向后兼容——老代码跑新 schema 不报错，两段式发布先加列后删列）。
+    3. **工具链**：GitHub Actions / GitLab CI / Jenkins；K8s（rolling update 原生支持灰度回滚）或 Docker Compose + 脚本。
+    4. **设计原则**：流水线越快越好（>10 分钟大家开始绕过）；一切变更走流水线（手动发布是事故之源）；**部署 ≠ 发布**（发布是流量切换，能随时回）。
+    5. **加分点**：提"你说得出回滚时间吗"——成熟团队的回答是分钟级；提 feature flag 让发布与功能上线解耦。
+
+- title: "RBAC 权限模型怎么设计？接口权限和数据权限分别怎么控？"
+  difficulty: 2
+  tags: ["RBAC", "权限", "系统设计"]
+  position_tags: ["fullstack", "backend", "java"]
+  answer: |
+    1. **RBAC 核心三表（+2）**：user、role、permission + 关联表 user_role、role_permission。用户→角色→权限，**授权给角色而非个人**（换人只换角色绑定）；权限点 = 菜单/按钮/接口三粒度可选。
+    2. **功能权限（能点能调什么）**：
+       - 后端：每个接口标注所需权限（注解/装饰器/中间件校验），鉴权失败 403——**前端隐藏按钮只是体验优化，后端校验才是安全边界**（直接 curl 一样被拦）；
+       - 前端：路由守卫（无权限路由跳转）+ 按钮级 v-if（权限指令），权限码由接口下发，避免前端写死。
+    3. **数据权限（能看哪些行）**：
+       - 实现：SQL 层注入过滤条件——部门隔离（created_by IN 我部门的人）、上下级可见、仅本人；MyBatis 拦截器/全局 scope 自动拼 WHERE，业务代码无感；
+       - 配置化：数据范围作为角色属性（全部/本部门/本部门及以下/仅本人），不用为每种范围写死接口。
+    4. **进阶**：权限缓存（Redis 缓存用户权限集，角色变更时失效）；多租户隔离（tenant_id 全表强制过滤）；审计日志（敏感操作留痕）；超级管理员的收敛（双人审批而不是无所不能）。
+    5. **加分点**：提 RBAC1/2/3（角色继承/职责分离）点到为止；提"权限设计的第一原则：默认拒绝，显式授予"。
+
+- title: "BFF 和 API 网关分别在架构里解决什么问题？"
+  difficulty: 3
+  tags: ["BFF", "网关", "微服务"]
+  position_tags: ["fullstack", "backend"]
+  answer: |
+    1. **API 网关（系统边界统一入口）**：
+       - 职责：路由转发、统一鉴权（JWT 校验）、限流熔断（保护后端）、日志审计、TLS 终结、灰度分流；
+       - 特点：**不关心业务**，横切面的事全收；实现：Nginx/Kong/APISIX/Spring Cloud Gateway。
+    2. **BFF（Backend for Frontend，为前端服务的聚合层）**：
+       - 解决**接口形状与前端需求的错配**：一个页面要的数据散在 5 个微服务（用户/订单/库存/优惠/物流），前端调 5 次自己拼？——BFF 一层聚合成页面需要的形状，一次返回；
+       - 每端一个 BFF（Web-BFF/App-BFF）各自裁剪字段、适配交互节奏（App 要省流量、Web 要全量）；
+       - **含业务逻辑**（聚合、字段映射、页面级缓存、请求编排并行化），这是与网关的本质区别。
+    3. **分工类比**：网关是小区保安（验证、拦截、记录），BFF 是各家的管家（按你的口味备菜）。
+    4. **什么时候不要 BFF**：小项目直接后端出聚合接口即可，加 BFF 只是多一跳多一坑；BFF 归前端团队维护是主流（贴近需求变更节奏），后端维护容易退化成"又一个后端"。
+    5. **加分点**：提 GraphQL 可作为 BFF 的一种实现形态（前端自选字段）；提 BFF 的腐化风险（业务逻辑偷偷全堆在 BFF，微服务退化成数据库）。
+
+- title: "微前端是什么？什么场景值得用？有什么坑？"
+  difficulty: 3
+  tags: ["微前端", "架构"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **是什么**：把巨石前端应用按业务域拆成独立开发、独立部署的子应用，运行时集成到一个外壳（主应用负责路由分发/公共依赖/登录态）。对标后端微服务的组织收益。
+    2. **值得用的场景**：
+       - 多团队并行开发超大型应用（几十人以上前端），互相阻塞发版；
+       - 技术栈异构需要共存（老 Angular 系统逐步迁 React，渐进式替换）；
+       - 独立子业务需要独立部署节奏（SaaS 平台不同模块由不同 BU 维护）。
+    3. **实现方案**：
+       - 路由分发（Nginx 按路径反代不同应用）——最简单，页面级切换；
+       - iframe——天然隔离最强，但通信麻烦/弹窗被裁剪/体验割裂；
+       - 基座加载（qiankun/single-spa）：主应用运行时加载子应用的 JS/HTML 并执行，共享沙箱；Module Federation（构建期共享模块）。
+    4. **主要的坑**：
+       - **样式与 JS 隔离**（CSS 前缀约定或 shadow DOM；JS 沙箱逃逸）；
+       - **公共依赖**：React 被打进每个子应用体积爆炸——external/共享依赖池，但版本不一致时地狱；
+       - **应用间通信**：没有银弹，约定事件总线/全局状态，过度通信=变相耦合；
+       - 体验一致性：不同团队的 UI 组件/交互风格漂移（需要设计系统约束）。
+    5. **加分点**：表达克制——"微前端解决的是组织问题不是技术问题"，团队规模不到（<10 前端）用它纯属自虐；monorepo + 组件化常常是更便宜的解。
+
+- title: "给你一个新项目做全栈技术选型，你的决策框架是什么？"
+  difficulty: 3
+  tags: ["技术选型", "架构", "方法论"]
+  position_tags: ["fullstack", "backend", "ai_app"]
+  answer: |
+    1. **先问业务再谈技术**（输入决定输出）：
+       - 业务形态：To B 管理后台 / To C 高并发 / 内容型 / 工具型——形态决定骨架；
+       - 规模预期：日活 1 千还是 1 百万？预估 90% 的系统按"够用"设计，别为幻想的流量过度设计；
+       - 团队约束：现有技术栈和招聘画像（**团队会的就是最好的**，冷门栈的坑没人填）；
+       - 迭代节奏： MVP 三个月验证 or 长期演进产品。
+    2. **选型框架（每项过一遍）**：
+       - **成熟度**：社区规模、文档质量、生产案例、issue 响应——警惕 0.x 版本的酷炫新玩具做核心；
+       - **生态契合**：与既有设施（DB/缓存/监控/部署）的整合成本；
+       - **可替换性**：关键路径选有标准接口的东西（ORM 抽象、消息队列协议兼容），避免深度锁定；
+       - **运维成本**：自建 or 托管（小团队用托管数据库换时间，钱换人才是赚的）；
+       - **人员匹配**：学习曲线 vs 团队现有能力。
+    3. **典型组合示例**（展示你有一套默认答案）：
+       - 中小型全栈：Vue3/React + TS + FastAPI/NestJS + PostgreSQL + Redis + Docker Compose；
+       - 快速 MVP：Next.js 全栈 + Postgres（Supabase）+ Vercel；
+       - 高并发 C 端：框架化后端 + 分库分表预案 + 消息队列削峰 + CDN。
+    4. **表达原则**：没有最好的技术只有最合适的 trade-off；**说得出"选它放弃了什么"** 的选型才是好选型；预留演进路径（单体起步模块化清晰，需要时再拆）。
+    5. **加分点**：提"选型最大的隐藏成本是组织学习成本"；给结论时主动说风险和何时该重估这个决定。
+
+- title: "前端性能优化有哪些手段？首屏慢你会怎么排查和优化？"
+  difficulty: 2
+  tags: ["性能优化", "首屏", "Web指标"]
+  position_tags: ["fullstack", "frontend"]
+  answer: |
+    1. **先定指标再优化**：核心 Web 指标——**LCP**（最大内容渲染，<2.5s）、**INP**（交互响应）、**CLS**（布局偏移）；用 Lighthouse / WebPageTest / RUM（真实用户监控）建立基线，**数据驱动**。
+    2. **首屏慢的排查路径**：网络瀑布图（TTFB 慢=服务端/CDN 问题？资源加载慢=体积/缓存？）→ 资源审计（bundle 分析器看包构成）→ 渲染路径（关键 CSS？阻塞脚本？）→ 框架层（hydration 长任务？）。
+    3. **优化手段分层**：
+       - **网络层**：静态资源 CDN + HTTP/2/3、压缩（gzip/brotli、图片 WebP/AVIF + 懒加载、srcset 响应式）、**缓存策略**（hash 资源长缓存）；
+       - **资源层**：代码分割（路由级 lazy import，首屏只加载首屏代码）、Tree-shaking、按需引入组件库、大依赖（echarts/编辑器）动态加载、critical CSS 内联 + 其余异步；
+       - **渲染层**：SSR/SSG（SPA 白屏的根治方案）、预加载关键资源（preload/prefetch/dns-prefetch）、骨架屏、虚拟列表（长列表）、防抖节流；
+       - **运行时**：长任务切片（requestIdleCallback）、Web Worker 跑重计算、内存泄漏排查（ detachment 的 DOM/定时器）。
+    4. **工程化保障**：bundle 体积预算（CI 卡点，超了不让合）、性能回归监控（RUM 上报 + 报警）、CI 里跑 Lighthouse 分数门禁。
+    5. **加分点**：讲优化的优先级判断——**先看免费午餐（缓存/CDN/压缩）再动架构**；主动提"优化前先测量、优化后要验证"，没有数据的优化是玄学。
