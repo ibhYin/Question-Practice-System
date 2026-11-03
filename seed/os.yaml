@@ -1,0 +1,247 @@
+- title: 进程、线程、协程的区别？
+  category: OS
+  difficulty: 1
+  tags:
+  - 进程
+  - 线程
+  - 协程
+  position_tags:
+  - java
+  - backend
+  - golang
+  - cpp
+  - fullstack
+  answer: |
+    1. **进程**：资源分配的最小单位——独立地址空间、文件描述符表；进程间内存隔离，切换开销大（换页表、刷 TLB）。
+    2. **线程**：CPU 调度的最小单位——同进程内线程共享地址空间（堆、全局变量），私有栈与寄存器；切换只换栈和寄存器，比进程轻；共享内存带来并发同步问题。
+    3. **协程**：**用户态**调度的轻量"线程"——切换由程序控制（函数调用级别，纳秒级），不进内核；单线程内多协程，靠主动让出（yield）协作调度。
+    4. **协程的价值**：IO 密集场景一个线程跑百万协程（Go goroutine、Python asyncio、Java 虚拟线程是 JVM 托管的虚拟协程形态）；同步写法获得异步吞吐。
+    5. **对比维度**：切换成本 协程 < 线程 < 进程；隔离性 进程 > 线程 > 协程；协程阻塞整个线程的风险（虚拟线程已解决卸载问题）。
+    6. **加分点**：能画内存布局图（进程隔离 vs 线程共享堆栈分区）；goroutine 的 GMP 调度模型一句话。
+- title: 进程间通信（IPC）方式有哪些？各自特点与适用场景？
+  category: OS
+  difficulty: 2
+  tags:
+  - IPC
+  - 进程通信
+  position_tags:
+  - backend
+  - cpp
+  - dba
+  answer: |
+    1. **管道（pipe）**：半双工、亲缘进程间（fork 继承 fd）；命名管道（FIFO）支持无亲缘进程。适合简单单向流。
+    2. **消息队列**：内核中的消息链表，类型化读取、异步；有大小限制，适合小消息命令传递。
+    3. **共享内存**：多个进程映射同一块物理内存——**最快的 IPC**（零拷贝进内核）；必须配信号量/互斥锁同步。适合大数据量高频交换（如进程间大数据块）。
+    4. **信号量（semaphore）**：本身不传数据，做**进程间同步互斥**（配共享内存用）。
+    5. **信号（signal）**：异步事件通知（kill -9 的 SIGKILL、段错误 SIGSEGV）；无数据承载，紧急通知。
+    6. **Socket**：跨主机通用（本机也可走 unix domain socket，比 TCP loopback 更快）——微服务间通信的本质。
+    7. **记忆与选型**：小消息队列、大数据共享内存、事件信号、跨机 socket；现代实践里"进程间通信"多数被 gRPC/消息队列等应用层方案替代，但底层原理一脉相承。
+    8. **加分点**：共享内存为什么最快（数据不过内核两次拷贝）；unix domain socket 的 fd 传递能力。
+- title: 虚拟内存是什么？页表怎么工作？为什么需要虚拟内存？
+  category: OS
+  difficulty: 2
+  tags:
+  - 虚拟内存
+  - 页表
+  position_tags:
+  - backend
+  - cpp
+  - java
+  - dba
+  answer: |
+    1. **是什么**：给每个进程一套独立的虚拟地址空间（如 0~4GB），CPU 通过 **MMU + 页表**把虚拟地址翻译成物理地址——进程"以为"独占内存。
+    2. **页表机制**：内存按页划分（4KB），虚拟页 → 物理页帧的映射存在页表；多级页表（x86-64 四/五级）省页表内存；**TLB 缓存近期翻译**加速（miss 才走页表遍历）。
+    3. **为什么需要**：
+       - **隔离与保护**：进程间互不可见，野指针打不穿别的进程；
+       - **内存超卖**：虚拟空间可大于物理内存（配合 swap）；
+       - **按需加载**：页可以不在物理内存（缺页时调入），程序不必整体驻留；
+       - **共享与 COW**：动态库共享映射、fork 写时复制的基础。
+    4. **缺页中断**：访问未映射页 → MMU 触发 page fault → 内核调入物理页（可能换出别的页）→ 重执行指令。
+    5. **实践关联**：malloc 返回的是虚拟地址（物理页未分配），touch 才缺页；Redis fork 的 COW 就是页表共享 + 缺页复制；数据库大内存进程关注 THP/NUMA。
+    6. **加分点**：能讲 TLB miss 与多级页表的性能影响；swap 与内存紧张时的颠簸（thrashing）。
+- title: 缺页中断是什么？常见页面置换算法有哪些？
+  category: OS
+  difficulty: 2
+  tags:
+  - 缺页
+  - 置换算法
+  position_tags:
+  - backend
+  - cpp
+  answer: |
+    1. **缺页中断**：访问的虚拟页不在物理内存（页表项标记不在/权限不符）→ CPU 触发异常 → 内核处理：物理页空闲则调入；满则**置换算法**选一页换出（脏页先写回 swap/文件）→ 更新页表 → 重新执行指令。
+    2. **置换算法**：
+       - **FIFO**：先进先出——实现简单，Belady 异常（页框变多缺页反而变多）；
+       - **OPT（理论最优）**：淘汰未来最久不使用的页——不可实现，作评测基准；
+       - **LRU**：淘汰最久未访问——效果好但硬件实现贵；
+       - **Clock（时钟/二次机会）**：环形链表 + 访问位，近似 LRU 的工程实现（主流）；
+       - LFU：淘汰最低频。
+    3. **局部性原理**：时间局部性（刚访问的会再访问）与空间局部性（相邻的会被访问）——置换算法与缓存设计都建立在此之上。
+    4. **实践关联**：Redis 淘汰策略的 LRU/LFU 同思想；数据库 buffer pool 的置换；swap 颠簸（thrashing）= 页频繁换进换出，系统卡死的典型根因。
+    5. **加分点**：能算缺页率对比 FIFO/LRU 的例子；工作集模型一句话。
+- title: select、poll、epoll 的区别？epoll 为什么高效？
+  category: OS
+  difficulty: 3
+  tags:
+  - IO多路复用
+  - epoll
+  position_tags:
+  - backend
+  - cpp
+  - java
+  - dba
+  answer: |
+    1. **select**：把 fd 集合拷贝进内核，线性扫描所有 fd 检查就绪；fd 上限 1024（FD_SETSIZE）；每次调用都要拷贝+重置集合——O(n)，连接多时退化。
+    2. **poll**：去掉了 1024 上限（pollfd 数组），其余同 select（每次全量拷贝 + O(n) 扫描）。
+    3. **epoll 三件套**：`epoll_create` 创建实例 → `epoll_ctl` 注册 fd（**一次性**）→ `epoll_wait` 只返回**就绪的 fd 列表**。
+    4. **epoll 高效的原因**：
+       - **红黑树管理 fd**：注册只做一次，无重复拷贝；
+       - **就绪链表 + 回调**：网卡数据到达 → 中断 → 内核回调把 fd 挂入就绪链表——wait 只收集就绪的，**O(就绪数) 而非 O(总连接数)**；
+       - **mmap 减少拷贝**（部分实现细节）。
+    5. **ET vs LT**：水平触发（就绪没处理完会持续通知，编程简单默认）vs 边缘触发（只通知一次，必须一次读完/循环 EAGAIN——配合非阻塞 fd，性能更好）。Redis/Netty（NIO）底层都是 epoll。
+    6. **加分点**：惊群问题（多进程争抢 accept）与 EPOLLEXCLUSIVE/SO_REUSEPORT；为什么 epoll 不能用在磁盘文件上（文件始终"就绪"）。
+- title: 什么是零拷贝？sendfile 和 mmap 的区别？
+  category: OS
+  difficulty: 3
+  tags:
+  - 零拷贝
+  - sendfile
+  position_tags:
+  - backend
+  - cpp
+  - java
+  - dba
+  answer: |
+    1. **传统读文件发网络 = 4 次拷贝 4 次切换**：read（磁盘→内核缓冲→用户缓冲）+ write（用户缓冲→socket 缓冲→网卡）——数据在内核与用户态之间来回搬运。
+    2. **sendfile（Linux 2.1+）**：`sendfile(fd_out, fd_in, offset, count)` 数据从**文件页缓存直接到 socket 缓冲**（内核态内完成，部分实现带 DMA gather 直接到网卡）——用户态零拷贝，**2 次拷贝 2 次切换**。Kafka 消费、Nginx 静态文件、Netty FileRegion 的底层。
+    3. **mmap + write**：把文件映射进用户地址空间（用户态直接读写页缓存），省"内核→用户"一次拷贝——仍有一次用户态拷贝，适合需要**修改数据**或配合 writes 的场景；Kafka 索引文件用 mmap。
+    4. **其他零拷贝技术**：splice（管道中转）、DMA gather copy（真正的零 CPU 拷贝）；Java 的 FileChannel.transferTo = sendfile，DirectByteBuffer 减少 JVM 内拷贝。
+    5. **适用边界**：零拷贝适用于"读文件发网络"这类**不需要修改数据**的管道；需要应用层处理数据时仍要进用户态。
+    6. **加分点**：能画出 4 次拷贝 → 2 次拷贝 → DMA gather 的演进图；Kafka 高吞吐的零拷贝是其中一环。
+- title: 用户态和内核态是什么？为什么切换有成本？怎么减少？
+  category: OS
+  difficulty: 2
+  tags:
+  - 用户态
+  - 内核态
+  position_tags:
+  - backend
+  - java
+  - cpp
+  answer: |
+    1. **两级特权**：CPU 分特权级（Ring3 用户态/Ring0 内核态）——应用代码跑用户态（受限：不能直接访问硬件/内存）；系统调用、中断、异常进入内核态执行特权操作。
+    2. **切换成本**：保存/恢复用户态寄存器与上下文、验证与切换页表内核映射、内核代码执行（如文件系统/协议栈逻辑）、**缓存局部性破坏**（TLB/分支预测失效）——一次系统调用微秒级，高频调用累积可观。
+    3. **常见触发**：read/write/网络 syscalls、mmap 页错误、futex 阻塞锁、定时器信号。
+    4. **减少切换的手段**：
+       - **批量**：一次 syscall 处理多数据（writev、epoll 批量就绪）；
+       - **缓存**：应用层缓冲减少小 IO；
+       - **用户态化**：io_uring（提交队列批量异步 IO，减少 syscall 次数）、用户态协议栈、协程（减少线程切换而非 syscall）；
+       - 锁优化（CAS 自旋避免 futex 进内核）。
+    5. **实践观测**：perf/strace 看系统调用占比（strace 有开销，生产慎用）、perf stat 的 context-switches。
+    6. **加分点**：io_uring 的 SQ/CQ 双队列模型；"一次 write + 一次 fsync"对高延迟磁盘的放大效应。
+- title: fork 的原理？写时复制（COW）怎么工作？
+  category: OS
+  difficulty: 2
+  tags:
+  - fork
+  - 写时复制
+  position_tags:
+  - backend
+  - cpp
+  - dba
+  answer: |
+    1. **fork**：复制当前进程产生子进程（返回值区分父子：0 为子、pid 为父）——**逻辑上复制全部地址空间**，但物理内存并不立即复制。
+    2. **写时复制**：fork 后父子**共享同一份物理页**，页表标记只读；任一方**写**某页时触发缺页异常 → 内核复制该页 → 各自持有副本——"延迟到写时才真正复制"。
+    3. **为什么这样设计**：fork 常伴随 exec（立刻换程序映像）——立即复制是纯浪费；COW 让 fork 接近 O(页表大小) 而非 O(内存大小)。
+    4. **经典应用**：Redis bgsave/AOF 重写（子进程获得一致性快照）、Shell 的命令执行（fork+exec）、大进程的快速并发启动。
+    5. **坑**：写密集场景 COW 内存暴涨（Redis fork 后写多内存翻倍）；fork 复制页表的耗时随进程内存增大（大实例 fork 卡顿）；THP 开启会放大复制粒度（2MB 页）。
+    6. **加分点**：vfork 的历史（共享地址空间直到 exec）；clone 系统调用是线程的实现基础（共享哪些资源由 flags 决定）。
+- title: inode 是什么？软链接和硬链接的区别？
+  category: OS
+  difficulty: 2
+  tags:
+  - inode
+  - 文件系统
+  position_tags:
+  - backend
+  - dba
+  - cpp
+  answer: |
+    1. **inode**：文件的元数据节点——存储权限、大小、时间戳、**数据块指针**；**文件名存在目录项里**（目录是"文件名→inode 号"的映射表）。所以同一文件可以多个名字（硬链接）。
+    2. **硬链接**：`ln` 创建——另一个目录项指向**同一 inode**，链接计数 +1；删除任一名字只要计数 >0 文件还在（计数归零才真正释放数据块）。限制：不能跨文件系统、不能对目录（防环）。
+    3. **软链接（symbolic link）**：独立文件，内容是**目标路径**（有自己的 inode）——可跨文件系统、可指目录，但**目标删除后变悬空链接**。
+    4. **实践场景**：硬链接——备份增量去重（rsync --link-dest）、多版本共享数据块；软链接——版本切换（current → releases/v12，原子 mv 实现部署回滚）、路径别名。
+    5. **磁盘满的两种情况**：inode 用完（大量小文件，df -i 查看）vs 数据块用完——日志系统海量小文件踩过 inode 满的坑。
+    6. **加分点**：删除文件的真正语义（目录项移除 + 链接计数减，进程持有 fd 时数据仍可读——"已删除但空间不释放"的经典排查：lsof | grep deleted）。
+- title: 内存泄漏在系统层面什么表现？OOM killer 是什么？
+  category: OS
+  difficulty: 2
+  tags:
+  - 内存
+  - OOM
+  position_tags:
+  - backend
+  - java
+  - dba
+  answer: |
+    1. **系统级表现**：free 里 available 持续下降 → 触发 swap（si/so 非零，系统变卡）→ 最终物理内存+swap 耗尽 → **OOM killer 出场**。
+    2. **OOM killer**：内核在内存耗尽时按 **oom_score**（综合内存占用、oom_score_adj 权重）挑选进程**直接杀死**——表现是"进程无故消失"（dmesg 里记录 killed process）。这就是"Java 进程突然没了但日志没有 OOM"的经典谜底——**是 OS 杀的不是 JVM 自己 OOM**。
+    3. **排查链路**：dmesg/grep -i kill 确认 OOM → ps/监控找内存大户 → 应用侧 heap dump/内存画像 → 容器场景注意 cgroup limit（容器内 OOM 被 kill 无 dmesg 时看 /sys/fs/cgroup/memory.events）。
+    4. **防控**：进程内存限额（cgroup/systemd MemoryMax）、监控 available 与 swap 使用率告警、给关键进程 oom_score_adj=-1000 保护（慎用，否则杀别的）、应用侧修泄漏（Java 堆外/元空间、C 的 malloc 泄漏 valgrind/ASan）。
+    5. **swap 的权衡**：数据库/延迟敏感服务通常关 swap 或调低 swappiness（换页抖动比内存略紧更可怕）；桌面/批处理留 swap 作缓冲。
+    6. **加分点**：Java 场景"OS OOM vs JVM OOM"的区分（-Xmx 不含堆外/元空间/线程栈——总内存超限被 OS 杀）；MySQL 的 innodb buffer pool 与 OS 缓存竞争。
+- title: 信号量和互斥锁的区别？用它们实现生产者消费者？
+  category: OS
+  difficulty: 2
+  tags:
+  - 信号量
+  - 互斥锁
+  position_tags:
+  - backend
+  - cpp
+  - java
+  answer: |
+    1. **互斥锁（mutex）**：**二值**锁——同一时刻一个持有者，锁定临界区"谁进谁出"；强调**互斥**（拥有者才能解锁）。
+    2. **信号量（semaphore）**：**计数器**——P（wait，减 1，为 0 则等待）与 V（signal，加 1 唤醒等待者）；可多值，表达"可用资源数量"；不绑定持有者（A 的 V 可以唤醒 B）。
+    3. **分工**：互斥 = 保护临界区；信号量 = 资源计数与顺序协调（生产消费的"空位"与"存货"）。
+    4. **生产者消费者实现（伪代码）**：
+       ```
+       semaphore empty = N; semaphore full = 0; mutex = 1;
+       生产者: P(empty); P(mutex); 放数据; V(mutex); V(full);
+       消费者: P(full);  P(mutex); 取数据; V(mutex); V(empty);
+       ```
+       两个信号量控制容量与数量，互斥锁保护缓冲区本身；**P 的顺序不能颠倒**（先 mutex 后 empty 会死锁——持有锁等待资源）。
+    5. **实现层**：用户态自旋（CAS，短临界区）vs 内核 futex（竞争激烈挂起）；Java 的 Semaphore/synchronized 对应此模型。
+    6. **加分点**：能指出"先 mutex 后 empty"的死锁原因（经典顺序陷阱）；条件变量（condition variable）与信号量的等价转换。
+- title: 常见的进程调度算法有哪些？
+  category: OS
+  difficulty: 2
+  tags:
+  - 调度算法
+  position_tags:
+  - backend
+  - cpp
+  answer: |
+    1. **FCFS（先来先服务）**：排队执行——简单；短任务被长任务堵死（护航效应）。
+    2. **SJF（短作业优先）**：平均等待时间最优；但**长任务饥饿**，且运行时长难预知。
+    3. **RR（时间片轮转）**：每个进程轮流执行时间片——响应公平；时间片权衡（太大退化为 FCFS，太小切换开销占比高）。
+    4. **优先级调度**：高优先级先跑——**低优先级饥饿**；老化（aging，等待越久优先级越高）缓解；抢占 vs 非抢占两种。
+    5. **多级反馈队列（MLFQ，主流理论）**：多个优先级队列，新进程进最高队列，用完时间片降级（交互型短任务滞留高层，批处理沉底）——综合 RR + 优先级 + 老化，无需预知时长。
+    6. **Linux 现实**：CFS（完全公平调度器）——虚拟运行时间 vruntime 保证公平，红黑树选最左；实时进程走 RT 调度类优先。CPU 调度与 IO 密集/计算密集的进程 nice 值调整。
+    7. **加分点**：能对比"交互式 vs 批处理"系统对响应时间/吞吐的偏好；CFS 的 vruntime 计算一句话。
+- title: 移动端适配方案有哪些？rem/vw/响应式怎么选？
+  category: FULLSTACK
+  difficulty: 2
+  tags:
+  - 移动端
+  - 适配
+  position_tags:
+  - fullstack
+  - frontend
+  answer: |
+    1. **rem 方案**：html font-size 随屏宽缩放（flexible + postcss-pxtorem），设计稿 px 等比转 rem——一稿适配所有宽度；需要 JS 初始化。
+    2. **vw 方案**：postcss-px-to-viewport 把 px 编译成 vw——纯 CSS 无 JS、无闪烁，现代等比方案主流。
+    3. **响应式布局**：flex/grid + 媒体查询断点 + clamp()——不同设备不同布局（非机械等比），内容型/中后台推荐。
+    4. **选型**：营销活动 H5（视觉还原优先）→ vw/rem 等比；中后台内容站（可读性优先）→ 响应式断点；小程序 rpx 同 rem 思想。
+    5. **细节坑**：1px 边框在 dpr>1 屏上变粗（transform scaleY 或 border-image）；刘海屏安全区 `env(safe-area-inset-*)`；viewport meta 设置；等比方案在 iPad 大屏字号过大的权衡（限最大宽度）。
+    6. **加分点**：物理像素/逻辑像素/dpr 三者关系；srcset 响应式图片与适配方案配合；动态 viewport 高度（dvh）解决移动端地址栏收起问题。

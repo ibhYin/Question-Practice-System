@@ -21,12 +21,15 @@ def main() -> None:
     added, skipped = 0, 0
     try:
         for f in sorted(Path(__file__).parent.glob("*.yaml")):
-            category = f.stem.upper()  # mysql.yaml -> MYSQL
-            if category not in CATEGORY_NAMES:
-                print(f"[跳过] 未知类别文件：{f.name}")
-                continue
+            default_cat = f.stem.upper()  # mysql.yaml -> MYSQL
             items = yaml.safe_load(f.read_text(encoding="utf-8")) or []
+            file_added = 0
             for item in items:
+                # 文件名不是合法类别时（如 extras 批次文件），回退到每题的显式 category 字段
+                category = item.get("category") or default_cat
+                if category not in CATEGORY_NAMES:
+                    print(f"[跳过] {f.name} 中未知类别：{category} - {str(item.get('title'))[:30]}")
+                    continue
                 title = str(item["title"]).strip()
                 exists = (
                     db.query(Question)
@@ -39,7 +42,7 @@ def main() -> None:
                 db.add(
                     Question(
                         title=title,
-                        category=item.get("category") or category,
+                        category=category,
                         difficulty=int(item.get("difficulty", 2)),
                         tags=item.get("tags") or [],
                         position_tags=item.get("position_tags") or [],
@@ -48,7 +51,8 @@ def main() -> None:
                     )
                 )
                 added += 1
-            print(f"[文件] {f.name}：{len(items)} 题")
+                file_added += 1
+            print(f"[文件] {f.name}：{len(items)} 题（新增 {file_added}）")
         db.commit()
         # 清空全部抽题池缓存，让新题立即可见
         for cat in CATEGORY_NAMES:

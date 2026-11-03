@@ -1,0 +1,253 @@
+- title: Transformer 的自注意力怎么计算？Q、K、V 各自的含义？复杂度是多少？
+  category: AI_APP
+  difficulty: 3
+  tags:
+  - Transformer
+  - Attention
+  position_tags:
+  - ai_app
+  - agent
+  answer: |
+    1. **直观理解**：Query 是"我要找什么信息"，Key 是"我能提供什么信息的标签"，Value 是"实际携带的内容"。注意力 = 每个位置用自己的 Q 与所有位置的 K 算相关性，按相关度加权聚合各位置的 V。
+    2. **公式**：Attention(Q,K,V) = softmax(QKᵀ/√d_k)·V——QKᵀ 得 n×n 相关性矩阵；除 √d_k 防止点积随维度增大导致 softmax 饱和、梯度消失；softmax 归一成权重后对 V 加权求和。
+    3. **多头（Multi-Head）**：h 组独立的 Q/K/V 投影各自做注意力再拼接线性变换——不同头学习不同关系模式（句法/指代/位置邻近），表达力远超单头。
+    4. **复杂度**：自注意力 O(n²·d)（n 为序列长度）——序列翻倍算力 ×4，这就是长上下文贵的根源；FFN 是 O(n·d²)。推理时配合 KV Cache 消除历史重复计算。
+    5. **为什么取代 RNN**：全序列并行计算（矩阵乘一次完成）；任意两 token 直接交互（信息路径 O(1)，长依赖不衰减）；可解释性好。
+    6. **加分点**：能解释除 √d_k 的方差推导；Causal Mask 让 Decoder 只看过去（预测下一词不偷看答案）；稀疏/线性注意力（降低 n²）的动机。
+- title: KV Cache 是什么？为什么能加速推理？显存怎么估算？
+  category: AI_APP
+  difficulty: 3
+  tags:
+  - KV Cache
+  - 推理优化
+  position_tags:
+  - ai_app
+  answer: |
+    1. **问题**：Decoder 自回归生成时，第 t 步要对全部历史 token 算注意力——若不缓存，每生成一个 token 都要重算所有历史 token 的 K/V，重复计算海量。
+    2. **方案**：把每层已计算的 K、V 缓存下来，新 token 只算自己的 Q/K/V 追加进 cache——历史 K/V 直接复用。单步推理从 O(n²) 降到 O(n·d)。
+    3. **显存估算（面试必会）**：`2（K、V 两份）× 层数 × KV 头数 × head_dim × 序列长 × batch × 单元素字节`。例：7B 模型 32 层、hidden 4096、FP16、4K 上下文 → 单序列 ≈ 2×32×4096×4096×2B ≈ 2GB——长上下文 + 大 batch 时 KV Cache 显存**超过模型权重**。
+    4. **优化方向**：GQA/MQA 减少 KV 头数（缓存等比缩小）；KV Cache 量化（FP8/INT8）；PagedAttention（vLLM 分页管理消除碎片，等效提升 batch）；长文本滑窗丢弃远端。
+    5. **加分点**：能算具体数字；"prefill 是算力瓶颈、decode 是显存带宽瓶颈"的判断；MQA/GQA 正是为压缩 KV Cache 而生。
+- title: RoPE 旋转位置编码为什么成为主流？
+  category: AI_APP
+  difficulty: 3
+  tags:
+  - RoPE
+  - 位置编码
+  position_tags:
+  - ai_app
+  answer: |
+    1. **为什么需要位置编码**：自注意力对输入集合置换不变，没有位置信息就无法区分语序。
+    2. **RoPE 的巧思**：把位置信息注入 Q/K 的**旋转**——q_m、k_n 按各自位置旋转后做内积，结果天然只依赖**相对位置 (m-n)**：用绝对位置编码实现了相对位置感知。
+    3. **实现**：按维度两两分组旋转，每组频率 θ_i = 10000^(-2i/d) 递减——不同维度对捕捉不同尺度（高频细粒度、低频长程）。
+    4. **为什么主流（LLaMA/Qwen/DeepSeek 全在用）**：相对位置感知利于泛化；**零参数**纯数学变换；与 KV Cache 无缝兼容；**长度外推友好**——调 base（NTK/YaRN）即可把 8K 模型扩到 128K。
+    5. **加分点**：YaRN/NTK-aware 缩放 vs 线性插值的差异；ALiBi 线性偏置作为对比路线；绝对（BERT）/相对（T5 bias）/旋转（RoPE）三代谱系。
+- title: Tokenizer 与 BPE 的原理？为什么中文大模型要自定义词表？
+  category: AI_APP
+  difficulty: 2
+  tags:
+  - Tokenizer
+  - BPE
+  position_tags:
+  - ai_app
+  answer: |
+    1. **作用**：文本 ↔ token 序列的双向转换，模型计算的最小单位——**token 就是计费与上下文长度的计量单位**。
+    2. **BPE 流程**：从字符级词表出发，统计相邻 token 对频次，**迭代合并最高频对**为新 token，直到词表达到目标容量——高频词自然融合成单 token，长尾词保持子词切分，无 OOV（byte-level BPE 字节级兜底）。
+    3. **变体**：WordPiece（按似然增益合并）、Unigram（先大后剪枝）、byte-level BPE（GPT 系）。
+    4. **中文为什么要自定义**：通用 GPT 词表中文按字/字节切，压缩比差（同内容 token 数多 2~3 倍）——**成本贵 + 上下文利用率低**；Qwen/GLM 扩充中文词表后压缩比大幅优化。
+    5. **工程要点**：tokenizer 与模型强绑定不可混用；特殊 token（对话模板控制符）不可被破坏；tiktoken 精确计数管理上下文预算。
+    6. **加分点**：数字切分对数学能力的影响；词表大小 vs Embedding 参数量的权衡；vocab 扩展后 embedding 的对齐处理。
+- title: MHA、MQA、GQA 的区别？推理时怎么取舍？
+  category: AI_APP
+  difficulty: 3
+  tags:
+  - 注意力变体
+  - KV Cache
+  position_tags:
+  - ai_app
+  answer: |
+    1. **MHA（多头）**：每头独立 Q/K/V——表达力最强，但 KV Cache 与头数正比，长上下文显存带宽爆炸。
+    2. **MQA（多查询）**：所有 Q 头共享**一组** K/V——缓存缩到 1/h，效果损失明显。
+    3. **GQA（分组查询）**：Q 头分组、每组共享一组 K/V（如 32 头分 8 组）——缓存省 4 倍、效果接近 MHA，**LLaMA-3/Qwen2 的主流选择**。
+    4. **取舍逻辑**：decode 阶段瓶颈在 KV Cache 读取带宽（每生成一个 token 都要读全部 KV）——减 KV 头数直接提速；训练成本几乎不变。DeepSeek 的 MLA 更进一步：低秩投影压缩 KV 到潜空间，缓存更小效果不掉。
+    5. **加分点**：能算 7B 模型 MHA→GQA 省多少显存；MQA→GQA 的 uptraining 迁移方法；prefill/decode 两阶段各自的优化重点。
+- title: 大模型训练的三个阶段（预训练/SFT/RLHF）各做什么？产物有什么区别？
+  category: AI_APP
+  difficulty: 2
+  tags:
+  - 训练
+  - SFT
+  - RLHF
+  position_tags:
+  - ai_app
+  - agent
+  answer: |
+    1. **预训练（Pre-training）**：万亿 token 无标注文本上做下一词预测——获得语言能力与世界知识，成本最高（千卡×月级）；产物 **base model**（会续写不会对话）。
+    2. **SFT（监督微调）**：万~百万条高质量指令-回答对，学会"按指令回答"——对话格式、指令遵循、角色扮演。数据质量 > 数量（LIMA 用千条即显著）；LoRA/QLoRA 让 SFT 成本可控；领域模型主要在这一阶段注入行业行为。
+    3. **RLHF/DPO（对齐）**：对齐人类偏好（有用/诚实/无害）。经典：训 Reward Model（人类排序）→ PPO 最大化奖励（KL 约束防跑偏）；DPO 简化为偏好对上的监督学习，稳定便宜成主流。
+    4. **产物差异**：base 模型问问题会"续写问题列表"，chat 模型会回答——应用必须用 chat 版本；对齐阶段决定体验上限，也可能带来"对齐税"（能力略降）与奉承模式。
+    5. **加分点**：RLHF 三阶段各模型的作用与显存压力；GRPO（组内相对奖励）新演进；领域适配"继续预训练 vs SFT"的选型。
+- title: DPO 相比 PPO 的优势？什么是 Reward Hacking？
+  category: AI_APP
+  difficulty: 3
+  tags:
+  - DPO
+  - 对齐
+  position_tags:
+  - ai_app
+  answer: |
+    1. **PPO-RLHF 的重**：actor/参考模型/RM/critic 四模型在线，采样+训练交替，工程复杂、超参敏感、训练不稳。
+    2. **DPO 的洞察**：RLHF 目标（最大化奖励 + KL 约束）有闭式解——最优策略由 RM 分数解析表达，因此 RM 训练与 RL 可**合并为一步监督学习**：直接在偏好对（chosen/rejected）上优化 logistic 损失。优势：稳定、简单、成本减半，小团队可落地。
+    3. **取舍**：DPO 是离线方法，数据分布固定，偏离分布后改进有限；前沿组合拳：SFT → DPO → 在线 RLHF 精修。
+    4. **Reward Hacking**：模型找到"高分但不符意图"的捷径——输出冗长（RM 偏爱长回答）、堆关键词、奉承用户、复述问题凑字。训练后突然变啰嗦 = 典型信号。
+    5. **缓解**：偏好数据长度归一化、KL 系数调参、控制偏好对的长度变量、对抗样本、上线后监控输出长度分布漂移。
+    6. **加分点**：Bradley-Terry 模型推导 DPO 损失；GRPO 组内相对奖励免 critic 的设计。
+- title: RAG 的引用溯源（citation）怎么实现？
+  category: AI_APP
+  difficulty: 2
+  tags:
+  - RAG
+  - 溯源
+  position_tags:
+  - ai_app
+  - agent
+  answer: |
+    1. **为什么必须**：RAG 的信任来自可验证——企业合规要求可追溯，无引用的答案用户不敢用。
+    2. **三层实现**：
+       - **元数据层**：chunk 入库时带 文档名/章节路径/页码/URL 锚点；
+       - **Prompt 层**：检索片段编号 [1][2][3]，指令要求"每个论点标注来源，未覆盖就说不确定"——输出内联引用；
+       - **前端层**：解析 [n] 映射原文，点击跳转 + 片段高亮（PDF.js 页码定位）。
+    3. **可信增强**：**引用校验**——模型给的引用与实际检索片段做相似度比对，防"假引用"；句子级归因（每句标注依据，NLI/LLM judge 验忠实度）。
+    4. **产品化**：无引用答案降级为"仅供参考"标记；多源冲突并列展示；被用户质疑的引用回流评测集。
+    5. **加分点**：Perplexity 的核心体验就是溯源；GraphRAG 的多跳证据链聚合。
+- title: Agent 的前端交互怎么设计？（流式、思考过程、工具调用可视化）
+  category: AGENT
+  difficulty: 3
+  tags:
+  - Agent
+  - 交互设计
+  position_tags:
+  - agent
+  - fullstack
+  - ai_app
+  answer: |
+    1. **核心矛盾**：Agent 任务跑几十秒到几分钟，过程不可见 = 用户以为卡死。**把过程变成产品体验**是 Agent 第一 UX 问题。
+    2. **事件流协议**：后端按阶段推结构化事件（SSE）——`thinking`/`tool_call`（工具名+参数）/`tool_result`（摘要）/`message_delta`（答案 token）/`done`——前端按类型渲染不同卡片。
+    3. **可视化分层**：
+       - 思考链默认折叠成一行"正在分析文档…"，可展开——透明但不轰炸；
+       - 工具调用卡片：图标 + 名称 + 参数摘要 + 耗时 + 结果摘要，点击看原始返回；
+       - 计划清单：复杂任务展示 planner 的步骤 checklist，完成打钩；
+       - 最终回答流式渲染 + 引用角标。
+    4. **控制能力**：随时停止、危险工具前弹确认（HITL）、长任务后台化跑完通知。
+    5. **工程要点**：SSE 断线重连（Last-Event-ID）、事件去重、参数脱敏展示。
+    6. **加分点**：Claude Code/Devin 的界面范式；"过度展示降低信任"——分级透明的产品判断。
+- title: 代码解释器类工具怎么安全实现？（沙箱设计）
+  category: AGENT
+  difficulty: 3
+  tags:
+  - 沙箱
+  - 安全
+  position_tags:
+  - agent
+  - backend
+  answer: |
+    1. **风险**：Agent 生成的代码 = 任意程序——读写文件、网络攻击、资源耗尽。**执行生成代码 = 给模型一个 shell**，必须硬隔离。
+    2. **沙箱方案**：
+       - **容器**：每任务一个 Docker（gVisor/Kata 强化），文件系统只读白名单、默认无网络、CPU/内存/超时限额、用完即销毁——主流；
+       - **microVM（Firecracker）**：VM 级隔离更彻底，多租户生产标准；
+       - **WASM**：秒级启动、天然权限模型，纯计算场景成熟中；
+       - 云服务：E2B/Modal 沙箱即服务。
+    3. **权限最小化**：AST 静态扫描危险调用（subprocess/os.system/eval）；网络默认禁或白名单代理；输出截断；产物（图表文件）存对象存储返回 URL。
+    4. **工程流程**：生成代码 → 静态审查 → 沙箱执行（超时强杀）→ 结构化结果（stdout/artifact）→ Agent 继续推理。
+    5. **加分点**：解释器让 Agent 从"会说"到"会做"（数据分析/图表/公式验证）；OpenAI Code Interpreter 与 Claude analysis tool 的产品形态对比。
+- title: AI 应用/Agent 的成本怎么核算？降级链路怎么设计？
+  category: AGENT
+  difficulty: 3
+  tags:
+  - 成本
+  - 降级
+  position_tags:
+  - agent
+  - ai_app
+  - backend
+  answer: |
+    1. **先核算**：按 feature/租户记录每次调用 token 与单价（网关埋点）→ 单次任务成本、单用户成本；Agent 注意"任务 = N 次调用"的乘数（Deep Research 一次 20+ 调用）。
+    2. **优化顺序**：
+       - Prompt 瘦身（历史压缩/工具结果截断/片段精选）——乘以调用次数的杠杆；
+       - 模型路由（简单步骤小模型、关键决策大模型）；
+       - 缓存（语义缓存 + prompt 前缀缓存折扣）；
+       - 离线批量走 batch API（半价）。
+    3. **降级链路**：
+       - L1 主链路（旗舰 + 完整工具）→ L2 次旗舰 → L3 小模型 + 精简工具 + 缩短输出 → L4 有损兜底（缓存答案/规则模板/转人工）；
+       - 触发条件明确（错误率/延迟/预算），网关自动切换，恢复后自动回升。
+    4. **预算护栏**：会话 token 上限、租户月配额、异常消耗告警（防循环调用事故——Agent 死循环烧钱的保险丝）。
+    5. **加分点**：能现场算账（10 次调用 × 8K token × 单价 → 单任务成本 → 月活毛利倒推选型）；"成本是产品力"的定价思维。
+- title: 生产级 Agent 出了事故怎么复盘？
+  category: AGENT
+  difficulty: 3
+  tags:
+  - 事故复盘
+  - 运维
+  position_tags:
+  - agent
+  - backend
+  answer: |
+    1. **Agent 特有事故**：模型升级行为漂移（隐性回归）、循环调用烧钱、工具误操作（发错消息/错误下单）、注入越权、上下文污染。
+    2. **应急三步（先止血）**：
+       - 止损开关：功能降级（切规则/模板）、模型秒切回滚、预算熔断；
+       - 定位：trace 全轨迹（哪步决策错、输入是什么）——**没有 trace 的 Agent 事故没法查**；
+       - 影响面：按工具调用日志反查波及用户/数据。
+    3. **复盘框架**：时间线还原 → 根因（5 Why：为什么选错工具 → 描述误导 → review 缺失）→ **归为系统而非模型**（模型不可靠是前提，防线缺失是根因）→ 改进闭环。
+    4. **沉淀为防线**：每次事故至少产出——一个回归评测 case、一条告警规则、一个防护机制（新增人工确认点）；"事故 → 评测集"自动回流。
+    5. **文化**：无责复盘；"模型热更新即生产变更"——模型/prompt/工具任一变更都走变更流程。
+    6. **加分点**：具体案例结构（现象→定位→根因→防线）讲一个完整故事。
+- title: Claude Code 为什么不用 RAG 检索代码？
+  category: AGENT
+  difficulty: 3
+  tags:
+  - Claude Code
+  - 检索
+  position_tags:
+  - agent
+  - ai_app
+  answer: |
+    1. **RAG 检索代码的困境**：代码语义跨文件连续（依赖/命名一致性），切块破坏上下文；代码改动频繁索引时效差；且代码检索多为**精确符号匹配**，embedding 的模糊语义反而失真。
+    2. **Agentic Search 做法**：不建索引，Agent 用基础工具主动探索——`grep`（符号/正则精确搜）→ `glob`（文件模式）→ `read`（读相关片段），像工程师一样多轮迭代收敛到目标。
+    3. **为什么反而更好**：grep 对符号匹配 100% 准确；零索引维护成本（新代码立即可查）；Agent 带着推理目的按需读，上下文高效；代价是多轮调用耗时——准确性优先的编码场景值得。
+    4. **混合策略**：语义检索粗召回（"找处理退款的代码"这种自然语言意图）→ agentic grep 精确定位；超大库先全库索引摘要定位再精查。
+    5. **加分点**：范式转变——检索从"一次向量查询"变成"带推理的迭代探索"；Deep Research 同理。
+- title: 前端错误监控体系怎么搭建？sentry 与 sourceMap 怎么配合？
+  category: FULLSTACK
+  difficulty: 3
+  tags:
+  - 监控
+  - sentry
+  position_tags:
+  - fullstack
+  - frontend
+  answer: |
+    1. **监控范围**：JS 运行时错误（window.onerror/unhandledrejection）、资源加载失败、接口错误率与耗时、白屏检测、web-vitals、自定义业务异常。
+    2. **Sentry 核心能力**：错误聚合 fingerprint 去重、release 版本标记、面包屑（用户操作回放）、session replay、issue 指派流转。
+    3. **sourceMap 链路（关键）**：生产构建产出 .map **不上传 CDN**（防源码泄露）→ 构建后 sentry-cli 上传 → Sentry 还原压缩堆栈为源码行号。**release 必须与 sourcemap 严格对齐**，否则还原错乱。
+    4. **告警闭环**：新 fingerprint 首次出现即时告警（飞书/钉钉 webhook）；发版后 1h 错误率对比回归；采样控制（错误全量、性能 1~10%）。
+    5. **细节坑**：跨域脚本报 "Script error."（加 crossorigin + CORS 头）；CSP report-only 模式额外发现注入风险。
+    6. **加分点**：自研 vs Sentry 的取舍（成本/数据主权）；错误率与业务指标联动的监控分级。
+- title: SSR、SSG、ISR 的区别？水合（Hydration）原理与常见坑？
+  category: FULLSTACK
+  difficulty: 3
+  tags:
+  - SSR
+  - 水合
+  position_tags:
+  - fullstack
+  - frontend
+  answer: |
+    1. **三种模式**：
+       - **SSR**：每请求服务端渲染 HTML 直出——首屏快、SEO 好，服务端有成本；
+       - **SSG**：构建时预渲染全部静态 HTML，CDN 分发最快——内容固定场景；
+       - **ISR（Next.js）**：静态页 + 后台按 TTL 重新生成——静态速度 + 准实时内容，电商页利器。
+    2. **水合原理**：SSR 的 HTML 是"死"的——客户端 JS 加载后框架重建组件树并**绑定事件**，页面才可交互。要求客户端渲染结果与服务端**一致**，不一致即 hydration mismatch。
+    3. **典型坑**：服务端与客户端时间/随机数不同（Date.now、Math.random）、依赖 window 的分支渲染、浏览器差异判断——解决：useEffect 后再算、suppressHydrationWarning 局部豁免、时间戳序列化。
+    4. **水合的演进**：整页水合阻塞交互（可见但点不动）→ 流式 SSR + 选择性水合（React 18 Suspense）→ 岛屿架构（Astro 静态为主交互岛单独水合）→ Resumability（Qwik 不重执行）。
+    5. **选型**：内容型 SEO → SSG/ISR；动态个性化 → SSR + 缓存；工具后台 → CSR 足够。
+    6. **加分点**：SSR 的"双请求"问题（服务端拉数据影响 TTFB）与缓存层设计；RSC（React Server Components）作为新范式。

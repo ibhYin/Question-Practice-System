@@ -1,0 +1,618 @@
+# 题库扩充批次：Java / JVM / 并发 / Spring（每题显式 category）
+- title: "什么是 Java 泛型擦除的限制？通配符 ? extends / ? super 怎么用？"
+  category: JAVA
+  difficulty: 2
+  tags: ["泛型", "PECS"]
+  position_tags: ["java"]
+  answer: |
+    1. **擦除**：泛型信息编译后擦除（List<String> 与 List<Integer> 运行时同为 List），T 替换为上界或 Object——字节码 Signature 属性仅留反射用。
+    2. **限制**：不能 new T()、T.class、instanceof T；静态成员不能用类泛型；基本类型需装箱；重载 List<String>/List<Integer> 参数冲突；泛型数组创建受限。
+    3. **PECS**：Producer Extends——`List<? extends Number>` 是生产者只读（不能 add，编译器不知具体类型）；Consumer Super——`List<? super Integer>` 是消费者可写 Integer、读出为 Object。API 设计（copy(src: ? extends, dst: ? super)）的标准手法。
+    4. **绕过技巧**：传 Class<T> 反射实例化；TypeToken（匿名子类把泛型写进 Signature 反射读取）解决 JSON 反序列化泛型。
+    5. **加分点**：桥方法（协变返回保持多态）的生成原理；通配符捕获（capture helper 方法）。
+
+- title: "Java 反射为什么慢？高频场景怎么优化？"
+  category: JAVA
+  difficulty: 2
+  tags: ["反射", "性能"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **慢的原因**：getMethod 遍历元数据查找、每次调用的安全检查（AccessControl）、参数装箱与 Object[] 开销、JIT 无法内联优化反射调用。
+    2. **Accessor 机制**：Method 内部 MethodAccessor——前 15 次 native 实现，之后 inflation 生成字节码版（可调阈值），这是"反射越用越快"现象的来源。
+    3. **优化**：**缓存 Method/Field**（收益最大）；setAccessible(true) 跳过权限检查；热点路径换 **MethodHandle**（ invokevirtual 语义、可被 JIT 内联）或 **LambdaMetafactory**（生成函数式接口实现，接近原生）；框架路线：启动期反射建立元信息 → 运行期字节码调用（MyBatis/Spring 6 AOT）。
+    4. **JDK17+ 限制**：强封装（Strong Encapsulation）默认拒绝跨模块深反射——需要 --add-opens；影响老框架升级。
+    5. **加分点**：反射与直接调用的实测差距量级（缓存 Method 后差距缩小到 2~5 倍，未缓存 20+ 倍）；GraalVM Native Image 需反射配置文件的原理。
+
+- title: "JDK 动态代理和 CGLIB 代理的实现原理与选择？"
+  category: JAVA
+  difficulty: 2
+  tags: ["动态代理", "CGLIB"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **JDK 代理**：运行时生成实现接口的 $Proxy 类（继承 Proxy），方法调用统一转发 InvocationHandler.invoke——**目标必须有接口**，反射调用元数据（Method 对象数组）。
+    2. **CGLIB**：ASM 生成目标类**子类**，方法拦截 MethodInterceptor，FastClass 机制用索引代替反射调方法——不能代理 final 类/方法、private 方法；代理对象构造两次。
+    3. **Spring 策略**：有接口默认 JDK，proxyTargetClass=true 强制 CGLIB；**Spring Boot 2.x 默认 CGLIB**（统一代理方式，避免 @Autowired 具体实现类注入失败）。
+    4. **对比**：JDK 代理生成快、CGLIB 调用快（FastClass 索引）；现代 JDK 版本两者性能差距可忽略；Metaspace 注意 CGLIB 类泄漏（动态生成类绑定类加载器）。
+    5. **加分点**：JDK17+ 与 CGLIB 的兼容问题与 Spring 6 内置替代；能写一个 InvocationHandler 给所有方法加耗时代码。
+
+- title: "String 的 intern() 是什么？字符串常量池在哪个区域？"
+  category: JAVA
+  difficulty: 2
+  tags: ["String", "常量池"]
+  position_tags: ["java"]
+  answer: |
+    1. **常量池位置变迁**：JDK6 在永久代 → JDK7 移到**堆**（可被 GC）→ JDK8 永久代废除改 Metaspace（字符串池仍在堆）。
+    2. **intern 行为**：返回池中等值引用；JDK7 起池中没有则**直接把当前堆引用放入池**（6 是复制对象），经典题：`new String("a")+new String("b")` 拼接后 intern 返回堆引用。
+    3. **new String("abc") 对象数**：常量池 "abc"（编译期）+ 堆 new 对象 = 2 个（池已存在则 1 个）；s.intern() 后 == 字面量的输出差异是高频题。
+    4. **用途与调优**：大量重复字符串（解析结果、状态名）intern 省内存；StringTable 是哈希表，-XX:StringTableSize 调桶数；大規模 intern 用 G1 的 String Deduplication（-XX:+UseStringDeduplication）自动去重。
+    5. **加分点**：String 不可变带来的好处（缓存 hashCode、常量池、线程安全、安全性）；concat/+/StringBuilder 的编译期优化（常量折叠 vs 运行期拼接）。
+
+- title: "BIO、NIO、AIO 三种 IO 模型的区别与适用场景？"
+  category: JAVA
+  difficulty: 2
+  tags: ["IO模型", "NIO", "Netty"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **BIO**：同步阻塞，一连接一线程——连接数高时线程爆炸（万级连接万级线程）。适合连接少短任务。
+    2. **NIO（同步非阻塞）**：Channel+Buffer+Selector——单线程多路复用监听海量连接的就绪事件，就绪才处理（事件驱动 Reactor）。Netty 是工业标准封装（主从 Reactor：boss 收连接、worker 处理 IO、业务线程池分离）。
+    3. **AIO（异步 IO）**：发起后回调通知（Proactor 模式）——Linux 底层仍是 epoll 模拟，收益不明显，Netty 已移除 AIO 支持；Windows IOCP 才是真正异步。
+    4. **选型**：HTTP 服务/Web 应用 → 框架已封装（感知不到）；高并发长连接（IM/网关/推送）→ NIO/Netty；文件快速传输 → NIO 零拷贝 transferTo（sendfile）。
+    5. **加分点**：多路复用与 Redis/epoll 同构；NIO 的 epoll 空轮询 bug 与 Netty 的应对（重建 selector）；零拷贝在 Netty 的 CompositeByteBuf/FileRegion。
+
+- title: "JDK8 之后 Java 并发/语法的重要演进有哪些？（Lambda/Stream/Record/虚拟线程）"
+  category: JAVA
+  difficulty: 2
+  tags: ["版本演进", "新特性"]
+  position_tags: ["java", "fullstack"]
+  answer: |
+    1. **JDK8（分水岭）**：Lambda + 函数式接口、Stream API（声明式集合处理）、Optional（显式处理 null）、接口 default 方法、新日期 API（LocalDateTime 线程安全替代 Date/Calendar）。
+    2. **JDK9-11**：模块化（JPMS）、var 局部类型推断、HttpClient（替代 HttpURLConnection）、String 增强（isBlank/repeat/strip）、单文件运行。
+    3. **JDK14-17**：**Record**（不可变数据载体，自动 equals/hashCode/toString）、sealed 密封类（受限继承层次 + 模式匹配）、switch 表达式、Text Block、**ZGC 生产可用**。
+    4. **JDK21（LTS 里程碑）**：**虚拟线程**（同步写法获得异步吞吐）、结构化并发预览、Record Pattern/模式匹配完备。
+    5. **实践建议**：新项目直接 17/21 LTS；8 → 17 升级最大收益是 G1/ZGC 性能与语言表达力；升级阻力点：javax→jakarta（Boot 3）、强封装限制反射、移除的内部 API。
+    6. **加分点**：能评价"Java 正在变年轻"（模式匹配 + 虚拟线程改变并发范式）；LTS 节奏与生产选择逻辑。
+
+- title: "ThreadLocal 的内存泄漏原理？InheritableThreadLocal 和线程池的坑？"
+  category: JAVA
+  difficulty: 3
+  tags: ["ThreadLocal", "内存泄漏"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **结构**：Thread 内含 ThreadLocalMap，key 是 ThreadLocal 的**弱引用**，value 是强引用。GC 后 key 变 null 但 value 被线程强引用链（Thread→Map→Entry.value）持有——线程池线程长生不死 → value 永不回收 = 泄漏。
+    2. **自救机制与局限**：get/set 时探测式清理 stale entry（key==null 的），但只清沿途——不调用 get 的线程泄漏依旧。**正确姿势：finally 里 remove()**。
+    3. **线程池坑**：任务复用线程 → 上一个任务的 ThreadLocal 值串到下一个任务（数据串号比泄漏更危险）——框架（Spring 事务/RequestContext）都靠 Filter/Interceptor finally 清理。
+    4. **InheritableThreadLocal**：子线程创建时复制父线程值——**线程池复用线程不触发继承**（线程早已创建），需要传递时用阿里的 TransmittableThreadLocal（TTL，装饰 Runnable 捕获上下文）。
+    5. **加分点**：hash 冲突的开放地址法（与 HashMap 链表法不同）；magic: ThreadLocalMap 的 key 弱引用设计动机（防止 ThreadLocal 对象本身泄漏）与 value 强引用的取舍。
+
+- title: "什么是 SPI 机制？JDBC 驱动是怎么被加载的？"
+  category: JAVA
+  difficulty: 2
+  tags: ["SPI", "服务发现"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **SPI 流程**：接口定义方在 META-INF/services/ 写实现类全名清单 → ServiceLoader.load(接口.class) 读取 → 反射实例化全部实现 → 迭代使用。JDBC：mysql-connector jar 里声明 java.sql.Driver 实现，DriverManager 初始化时扫描加载。
+    2. **双亲委派的裂缝**：Driver 接口由 Bootstrap 加载，实现在 classpath——父加载器无法加载子类路径的类 → **线程上下文类加载器（TCCL）**反向委托，这是对双亲委派模型的破坏（合法后门）。
+    3. **生态同思想**：Spring Boot 自动配置（spring.factories/AutoConfiguration.imports）、Dubbo SPI（增强：按名选择、IOC、AOP）、SLF4J 绑定。
+    4. **坑**：全量实例化无法按需选择；fat jar 合并 services 文件需 maven-shade 的 ServicesResourceTransformer；多驱动 classpath 冲突排查。
+    5. **加分点**：能对比 Java SPI vs Dubbo SPI vs Spring SPI 三代设计演进；ServiceLoader 懒加载（stream() / iterator 时才实例化）。
+
+- title: "什么是 Happens-Before 规则？列举几条重要的规则。"
+  category: JAVA
+  difficulty: 3
+  tags: ["JMM", "happens-before"]
+  position_tags: ["java"]
+  answer: |
+    1. **定义**：JMM（Java 内存模型）定义操作间的**可见性顺序契约**——若 A happens-before B，则 A 的结果对 B 可见（且禁止重排序破坏该顺序）。它是程序员与 JVM/CPU 的约定：程序员按规则推理，JVM 保证实现。
+    2. **核心规则**：
+       - **程序顺序**：单线程内按代码顺序（as-if-serial）；
+       - **监视器锁**：解锁 happens-before 后续加锁；
+       - **volatile**：写 happens-before 后续读；
+       - **线程 start/join**：start 前的操作可见于新线程；join 返回后子线程操作可见于主线程；
+       - **传递性**：A hb B 且 B hb C ⇒ A hb C；
+       - final 构造规则：构造函数内写 final 字段 hb 于其他线程读该对象引用后的读。
+    3. **实战意义**：解释"为什么 double-checked locking 需要 volatile"（instance 赋值与对象初始化的重排序违反规则）；线程池任务间的可见性依赖 submit/execute 内部的 hb 链。
+    4. **常见误区**：没有同步的两个线程之间**没有任何顺序保证**（数据竞争，结果不可预期）；volatile 不保证复合操作原子。
+    5. **加分点**：as-if-serial 与 hb 的关系；用 hb 规则证明 DCL 正确性是标准面试答法。
+
+- title: "什么是方法区/元空间溢出？动态生成类太多怎么排查？"
+  category: JVM
+  difficulty: 3
+  tags: ["Metaspace", "OOM"]
+  position_tags: ["java", "dba"]
+  answer: |
+    1. **元空间是什么**：JDK8 起类元数据从永久代移到**本地内存**（Metaspace），上限 -XX:MaxMetaspaceSize 默认无限（受物理内存约束）——"内存泄漏"表现为元空间持续增长。
+    2. **元空间 OOM 的典型来源**：
+       - **动态生成类**：CGLIB 代理（每次 new Enhancer 不同回调生成新类）、Groovy 脚本、JSP 重编译、反射 inflation、代码热部署——类加载器不卸载则类常驻；
+       - 大量 String.intern（JDK6 永久代时代）；
+       - 类加载器泄漏（容器 redeploy）。
+    3. **排查步骤**：`jstat -gcmetacapacity` / jcmd VM.metaspace 看趋势 → `-verbose:gc` 确认 Full GC 无法回收 → **jmap -histo:live 或类加载器统计**（jcmd GC.class_stats / classloader-stats）找异常多的类（$EnhancerByCGLIB 前缀数量即证据）→ 定位生成源（缓存 Enhancer、限制脚本编译）。
+    4. **参数**：-XX:MaxMetaspaceSize 显式上限（防吃光物理内存）+ MetaspaceSize 触发首次 GC 阈值；压测时监控元空间曲线是常规项。
+    5. **加分点**：能讲类卸载条件（类加载器被回收 + 类无实例 + 无引用）；CGLIB 的 cacheClass（Enhancer.setUseCache）与 Spring 对同一 key 复用代理类的设计。
+
+- title: "什么是逃逸分析？栈上分配、标量替换、锁消除怎么来的？"
+  category: JVM
+  difficulty: 3
+  tags: ["逃逸分析", "JIT"]
+  position_tags: ["java"]
+  answer: |
+    1. **逃逸分析**：JIT（C2）分析对象的作用域——**不逃逸**（只在方法内使用）/未逃逸出方法、未逃逸出线程。基于此做三项激进优化（编译期决定，运行时不感知）。
+    2. **标量替换**（主流实现，替代栈上分配）：对象拆散成基本类型标量（x、y 字段变局部变量）直接放寄存器/栈上——**对象根本不创建**，省掉堆分配与 GC。`new Point(1,2).getX()` 这类局部对象全被消除。
+    3. **栈上分配**：理论优化（对象放栈帧），HotSpot 实际用标量替换达到同样效果（面试要点：说"HotSpot 通过标量替换实现等价效果"更准确）。
+    4. **锁消除**：不逃逸出线程的对象上的 synchronized 直接删除——局部 StringBuffer/StringBuilder 的同步消失。
+    5. **验证与价值**：JMH + -XX:+DoEscapeAnalysis 开关对比（关闭后分配数暴涨）——GC 压力显著下降是热路径优化的免费午餐；逃逸分析失败的场景（对象存入数组/返回/异常路径）仍走堆分配。
+    6. **加分点**：能讲分析的成本（编译耗时）与 CodeCache 压力；大对象逃逸分析的局限。
+
+- title: "JVM 的分层编译（Tiered Compilation）是什么？C1 和 C2 的区别？"
+  category: JVM
+  difficulty: 3
+  tags: ["JIT", "分层编译"]
+  position_tags: ["java"]
+  answer: |
+    1. **解释执行 vs 编译执行**：解释器逐条执行字节码（启动快、性能低）；JIT 把热点代码编译成本地机器码（慢启动、高性能）。热点探测：方法调用计数器 + 回边计数器（循环），超阈值触发编译（OSR 栈上替换支持热循环中途切换）。
+    2. **分层编译（默认开启）5 层**：0 解释 → 1~3 C1（客户端编译器，快编译轻优化，不同档插桩）→ 4 C2（服务端编译器，深度优化：内联/逃逸分析/向量化）——**C1 快速预热 + C2 终极优化**的结合，兼顾启动速度与峰值性能。
+    3. **相关参数**：-XX:TieredStopAtLevel=1（只用 C1，快速启动场景如短生命周期工具）、-XX:CompileThreshold（纯 C2 模式阈值）、ReservedCodeCache（编译产物存放，满了停止编译性能退化——大项目要调大）。
+    4. **GraalVM JIT**：Java 写的编译器替代 C2（-XX:+UseJVMCICompiler），PEOT 微小提升 + Native Image（AOT）能力。
+    5. **加分点**：能讲"为什么 JIT 快于解释器但慢于 AOT 启动"的根本权衡；deoptimization（假设失效回退解释器）的概念；JMH 基准测试要预热的原因。
+
+- title: "生产环境必配的 JVM 参数有哪些？"
+  category: JVM
+  difficulty: 2
+  tags: ["JVM参数", "运维"]
+  position_tags: ["java", "dba"]
+  answer: |
+    1. **内存三件套**：-Xms = -Xmx（相等避免动态伸缩抖动；容器环境按 limits 的 50~75% 配）；-Xmn 或 G1 下不设（自适应）；-XX:MaxMetaspaceSize（防元空间吃满容器内存）。
+    2. **GC 选择**：JDK17 默认 G1 足够（-XX:MaxGCPauseMillis=200 按业务调）；超大堆低延迟 → ZGC（-XX:+UseZGC -XX:+ZGenerational）；堆外 -XX:MaxDirectMemorySize（Netty 应用必配）。
+    3. **可观测三件套（必配！）**：
+       - **OOM 自动留尸**：-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data/dump/；
+       - **GC 日志**：JDK9+ 统一格式 -Xlog:gc*:file=/data/log/gc.log:time,uptime:filecount=5,filesize=50m；
+       - **崩溃日志**：-XX:ErrorFile=/data/log/hs_err_%p.log。
+    4. **容器适配**：JDK8u191+/JDK10 默认感知容器内存（UseContainerSupport），仍建议显式 -Xmx 防误判；CPU 感知影响 GC 线程数。
+    5. **慎用清单**：-Xss 线程栈默认 1M 别乱调（递归深可适度加）；DisableExplicitGC 会导致 DirectMemory 无法 System.gc 回收（Netty 场景配 -XX:+ExplicitGCInvokesConcurrent）。
+    6. **加分点**：能给出一份 8C16G 容器的完整启动参数示例；OOM dump 与 k8s liveness 探针的配合（先 dump 再重启）。
+
+- title: "GC 日志怎么读？Full GC 频繁怎么定位？"
+  category: JVM
+  difficulty: 3
+  tags: ["GC日志", "排查"]
+  position_tags: ["java", "dba"]
+  answer: |
+    1. **日志格式（JDK9+ -Xlog:gc*）**：每行含时间戳、GC 类型、各代前后占用、耗时；G1 关键行——[Pause Young (Normal)]、[Pause Full]、Heap 区块占用、Evacuation 时间；**关注三个数**：单次停顿时长、停顿频率、回收后老年代是否降下去。
+    2. **Full GC 频繁的常见根因**：
+       - **内存不足**：堆太小/泄漏（老年代回收后仍在涨 → dump 分析）；
+       - **元空间不足**触发 Full GC；
+       - **System.gc() 被调用**（RMI/代码显式调用 → 配 ExplicitGCInvokesConcurrent）；
+       - **大对象直接进老年代**（Humongous 对象打爆 G1）；
+       - **promotion failed / to space exhausted**：晋升太快 Survivor 不够；
+       - **堆外内存压力**：DirectMemory 回收依赖 System.gc。
+    3. **定位工具链**：GC 日志可视化（gceasy/gcplot）→ jstat -gcutil 观察各代趋势 → dump（jmap/MAT）找占用大户 → arthas dashboard 实时观察。
+    4. **调优思路**：先定位根因再调参（调参是最后手段）；常见调整：加大堆、调整 SurvivorRatio、G1 的 MaxGCPauseMillis 与 RegionSize、排查代码里的缓存无上限/大集合。
+    5. **加分点**：能现场解读一段 G1 日志；"调优的尽头是加内存 + 删泄漏"的务实观点。
+
+- title: "CountDownLatch 和 CyclicBarrier 的区别？哪个可重用？"
+  category: CONCURRENT
+  difficulty: 1
+  tags: ["JUC", "同步器"]
+  position_tags: ["java"]
+  answer: |
+    1. **CountDownLatch**：N 个线程 countDown，主线程 await 等零——**一次性**（计数归零不可重置）。语义"等 N 件事完成"：主任务等待并行子任务、启动门闩（latch=1 先 await 后 countDown 放行 N 线程）。
+    2. **CyclicBarrier**：N 个线程各自 await，**到齐一起放行**，放行后栅栏**重置可循环用**（Cyclic）；可带 barrierAction（最后到达的线程先执行它）。语义"大家到齐再一起走"：分片计算多轮同步、并发测试起跑线。
+    3. **实现差异**：latch 基于 AQS 共享模式（state=count）；barrier 用 ReentrantLock + Condition（到齐 signalAll + 代次 generation 复位）。
+    4. **异常行为**：barrier 中有线程超时/中断 → 栅栏 broken（其他线程 BrokenBarrierException），需 reset；latch 无此概念（await 可带超时）。
+    5. **加分点**：Phaser（更灵活的多阶段栅栏，可动态注册）作为进化版提一嘴；CompletableFuture.allOf 异步场景替代 latch。
+
+- title: "Semaphore 是什么？怎么实现一个限流器？"
+  category: CONCURRENT
+  difficulty: 1
+  tags: ["Semaphore", "限流"]
+  position_tags: ["java"]
+  answer: |
+    1. **语义**：维护 N 个许可——acquire 获取（无许可阻塞）、release 归还。**控制同时访问某资源的线程数**。
+    2. **限流实现**：Semaphore(20) → 每请求 acquire → 业务执行 → finally release——同时最多 20 并发。tryAcquire(timeout) 支持快速失败（拿不到直接拒绝 = 限流降级）。
+    3. **其他场景**：数据库/下游连接池自建（每连接一许可）、批量任务并发度控制（1000 任务 10 并发）、多线程结果收集（acquire 全部完成再处理）。
+    4. **特性**：公平模式（构造参数，防饥饿）；acquireUninterruptibly（等待中不被中断）；一次 acquire 多许可（批量任务）。
+    5. **与替代方案对比**：单机限流 Guava RateLimiter（令牌桶，控制速率而非并发数）——Semaphore 限"同时数"，RateLimiter 限"每秒数"；分布式限流上 Redis+Lua 或 Sentinel。
+    6. **加分点**：release 泄漏（finally 缺失导致许可永久减少）的防御性编程；AQS 共享模式实现原理一嘴带过。
+
+- title: "CompletableFuture 的 thenApply 和 thenCompose 有什么区别？"
+  category: CONCURRENT
+  difficulty: 2
+  tags: ["CompletableFuture", "异步"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **thenApply**：接收 T 返回 U——同步转换，`cf.thenApply(x -> transform(x))` 得 CompletableFuture<U>。转换函数里做重活会阻塞回调线程。
+    2. **thenCompose**：接收 T 返回 **CompletableFuture<U>**——**扁平化异步串联**，避免 `CompletableFuture<CompletableFuture<U>>` 嵌套。函数式视角：thenApply 是 map，thenCompose 是 flatMap。
+    3. **选择口诀**：转换结果是"现成的值"用 thenApply；转换过程本身要发起**另一个异步调用**（如拿 userId 再查详情）用 thenCompose。
+    4. **执行线程**：默认在完成线程或调用线程执行；加 Async 后缀（thenApplyAsync）提交到 ForkJoinPool/指定池——IO 操作务必 Async + 自定义池。
+    5. **加分点**：异常传播沿链路（任一环 exceptionally 后续正常）；allOf 收集多路结果再 zip 的编排模板；thenCombine 合并两个独立异步结果。
+
+- title: "线程池里任务的异常去哪了？怎么处理？"
+  category: CONCURRENT
+  difficulty: 3
+  tags: ["异常处理", "线程池"]
+  position_tags: ["java"]
+  answer: |
+    1. **异常去向**：
+       - **execute(Runnable)**：异常直接抛给 UncaughtExceptionHandler → **线程死亡并新建**（控制台打印，线程池默默重建——监控线程数突变可发现）；
+       - **submit(Callable/Runnable)**：异常**被吞**，存进 FutureTask，只有调用 future.get() 时以 ExecutionException 重抛——不 get 就永远无人知晓（最阴险）。
+    2. **正确姿势**：
+       - 任务体最外层 try-catch 全兜住 + 记日志 + 上报监控；
+       - 统一 ThreadFactory 里 setUncaughtExceptionHandler 兜底；
+       - submit 的 future 必须 get 或用 CompletableFuture 的 exceptionally/handle 显式处理；
+       - ScheduledThreadPoolExecutor 周期任务异常会**终止后续调度**——必须内部捕获。
+    3. **监控**：线程池暴露指标（activeCount/queueSize/rejectCount）接入监控，异常计数单独打点。
+    4. **加分点**：能讲 FutureTask.run 的 catch 流程源码级解释；全局兜底方案（包装 Runnable 的装饰器模式统一 try-catch + traceId）。
+
+- title: "什么是 ThreadLocal 在线程池里的数据串号问题？怎么避免？"
+  category: CONCURRENT
+  difficulty: 3
+  tags: ["ThreadLocal", "线程池"]
+  position_tags: ["java", "backend"]
+  answer: |
+    1. **串号场景**：线程池复用线程，任务 A set 了 ThreadLocal（如用户上下文）没 remove → 任务 B 在同一线程读到 A 的用户——**跨请求数据泄漏**，比内存泄漏更严重的安全问题。
+    2. **规范做法**：Filter/Interceptor 入口 set，finally 里 remove（Spring 的 RequestContextFilter 就是范例）；自定义线程池包装 Runnable（装饰器统一 set/clear）。
+    3. **检测手段**：代码评审 Checklist；工具（阿里 Artemis/sonar 规则）；框架层兜底（TTL 的 Agent 模式自动传递与清理）。
+    4. **TransmittableThreadLocal（TTL）**：解决"ThreadLocal 值在线程池传递"——装饰任务捕获提交时快照，执行时恢复，结束时还原；与 InheritableThreadLocal 的区别（后者只在新建子线程时复制，池化线程不触发）。
+    5. **加分点**：虚拟线程时代 ThreadLocal 的新考量（百万线程 × 大对象 ThreadLocal = 内存放大）与 ScopedValue（作用域值，不可变 + 自动清理）的演进。
+
+- title: "Spring MVC 里一个请求经过哪些组件？（从 Filter 到 View）"
+  category: SPRING
+  difficulty: 2
+  tags: ["SpringMVC", "架构"]
+  position_tags: ["java", "fullstack"]
+  answer: |
+    1. **完整链路**：Tomcat 接收 HTTP → Filter 链（编码/CORS/traceId）→ DispatcherServlet → HandlerMapping 找到 Handler + Interceptor 链 → Interceptor.preHandle → HandlerAdapter（参数解析 @RequestBody 反序列化/@Valid 校验）→ Controller 方法 → 返回值处理（@ResponseBody → HttpMessageConverter 序列化；或 ViewResolver 渲染）→ Interceptor.postHandle → afterCompletion → Filter 链回程 → 响应。
+    2. **异常的出口**：Controller/Interceptor 抛的异常被 HandlerExceptionResolver 接住 → @ControllerAdvice 的 @ExceptionHandler 统一转 JSON；**Filter 里的异常不在体系内**（ErrorPage 机制兜底）。
+    3. **组件扩展点**：自定义 HandlerMethodArgumentResolver（特殊参数绑定）、Converter（枚举/ID 转换）、ReturnValueHandler、HandlerExceptionResolver。
+    4. **异步请求**：返回 Callable/DeferredResult/WebAsyncTask → Servlet 线程立即释放，异步完成后再派发渲染——长轮询场景。
+    5. **加分点**：能画出组件调用顺序图并标注哪层能抛给全局异常；Spring Boot 静态资源与 @RequestMapping 的匹配顺序（先精确后资源）。
+
+- title: "Spring Bean 初始化的回调顺序？@PostConstruct、afterPropertiesSet、init-method 谁先谁后？"
+  category: SPRING
+  difficulty: 2
+  tags: ["Bean生命周期", "回调"]
+  position_tags: ["java"]
+  answer: |
+    1. **初始化三连（按序）**：**@PostConstruct**（CommonAnnotationBeanPostProcessor 触发）→ **InitializingBean.afterPropertiesSet()**（容器回调）→ **init-method**（XML/@Bean(initMethod)）。
+    2. **销毁三连（逆序对称）**：@PreDestroy → DisposableBean.destroy() → destroy-method。
+    3. **选择建议**：@PostConstruct 最常用（注解集中、不耦合 Spring 接口）；afterPropertiesSet 耦合接口已少用；init-method 适合第三方类（不能改代码）。**依赖注入完成后才执行**（构造器里注入字段还是 null——经典坑）。
+    4. **BeanPostProcessor 的位置**：postProcessBeforeInitialization 在 @PostConstruct 前、After 在后——AOP 代理在 After 阶段生成。
+    5. **加分点**：能画完整生命周期图（实例化→填充→Aware→Before→初始化三连→After→使用→销毁三连）；@PostConstruct 里调用被 AOP 增强的方法拿的是原始对象的注意点。
+
+- title: "Spring 的循环依赖在构造器注入和 prototype 下为什么无解？"
+  category: SPRING
+  difficulty: 3
+  tags: ["循环依赖", "三级缓存"]
+  position_tags: ["java"]
+  answer: |
+    1. **三级缓存只救"字段/setter 注入的单例"**：A 实例化后先曝光工厂（三级缓存）→ B 创建时取 A 的早期引用 → B 完成 → A 继续。本质：**"实例化了但未初始化"的半成品可以提前暴露**。
+    2. **构造器注入无解**：A 的构造器需要 B 才能实例化——连"半成品"都不存在，三级缓存无从曝光。报 BeanCurrentlyInCreationException。
+    3. **prototype 无解**：原型 Bean 不缓存（每次新建），提前暴露机制不存在；且语义上每个引用都要新实例，环路本来就矛盾。
+    4. **解法**：@Lazy 注入（注入代理，首次使用才真正解析——打断环）；重构（循环依赖 = 设计问题，抽公共组件/事件解耦）；ObjectProvider 延迟获取。
+    5. **加分点**：2.6+ Spring Boot 默认禁止循环依赖（spring.main.allow-circular-references=false）——官方立场"这是设计坏味道"；三级缓存与二级缓存的理论区别（保证代理的唯一性）。
+
+- title: "TCP 粘包问题的四种解决方案？Netty 怎么支持？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["TCP", "粘包", "Netty"]
+  position_tags: ["backend", "java", "golang"]
+  answer: |
+    1. **成因**：TCP 字节流无消息边界——发送缓冲合并（Nagle）、MSS/MTU 分段、接收缓冲读取时机，导致一条消息被拆（拆包）或多条粘连（粘包）。
+    2. **四种解法**：
+       - **固定长度**：不足补齐（简单、浪费）；
+       - **分隔符**：\r\n 等（HTTP/Redis 用）；内容需转义；
+       - **长度前缀（推荐）**：header 4 字节 body 长度 + body，自定义二进制协议标配；
+       - **应用层自带结构**：HTTP 的 Content-Length/chunked。
+    3. **Netty 解码器**：FixedLengthFrameDecoder、DelimiterBasedFrameDecoder、**LengthFieldBasedFrameDecoder**（参数：长度域偏移/长度/调整值/剥除字节数——配置题高频）、LineBasedFrameDecoder。
+    4. **延伸**：字节序统一网络序；心跳保活区分协议心跳与 TCP keepalive；序列化框架（protobuf 自带 length-delimited）。
+    5. **加分点**：能写出 LengthFieldBasedFrameDecoder 的五参数含义并解释 adjustment 场景（长度域含 header 时）。
+
+- title: "HTTP/2 的多路复用为什么还会队头阻塞？QUIC 怎么解决的？"
+  category: NETWORK
+  difficulty: 3
+  tags: ["HTTP2", "QUIC", "队头阻塞"]
+  position_tags: ["backend", "fullstack"]
+  answer: |
+    1. **HTTP/1.1 队头阻塞（应用层）**：一条连接串行处理请求，前一个响应没完后面的必须等——靠开多条连接缓解（浏览器 6 条限制）。
+    2. **HTTP/2 多路复用**：二进制帧 + Stream 并发传输，**应用层阻塞解决**；但底层仍是一条 **TCP**——TCP 保证字节有序，**任何一个包丢失，所有 Stream 的数据都要等重传**（传输层队头阻塞）。丢包率 2% 时 HTTP/2 甚至慢于 HTTP/1.1 多连接。
+    3. **QUIC 的解法**：基于 UDP 自建可靠传输——**Stream 级独立序号与重传**，A 流丢包不影响 B 流；1-RTT/0-RTT 握手（TLS1.3 内嵌）；连接迁移（Connection ID，WiFi→蜂窝不断流）；内建拥塞控制可插拔（BBR 友好）。
+    4. **部署现实**：HTTP/3 需 UDP 443 放行、Alt-Svc 协商降级 HTTP/2；Nginx 1.25+/Envoy 支持；CDN 普遍已支持。
+    5. **加分点**：能画出"三层队头阻塞"演进图；HTTP/2 HPACK 动态表与 CRIME 攻击的关系一嘴；为什么 HTTP/2 强制 TLS。
+
+- title: "设计一个短链接服务，怎么生成短码、怎么扛住读流量？"
+  category: SCENARIO
+  difficulty: 3
+  tags: ["短链", "系统设计"]
+  position_tags: ["backend", "ai_app", "fullstack"]
+  answer: |
+    1. **量化**：62 进制 6 位（a-zA-Z0-9）≈568 亿；读多写少（100:1），跳转 QPS 远高于创建。
+    2. **生成方案对比**：哈希截断（冲突需重试）vs **发号器 + 62 进制编码（推荐）**——全局自增 id（DB 号段模式批量取，或 Redis INCR）转 62 进制，无冲突、有序；分布式部署多台发号器用号段隔离。
+    3. **存储**：MySQL 表（code 唯一索引，long_url + 过期时间 + 创建者），Redis 缓存热码（LRU，TTL 对齐短链有效期）；同一长链可幂等返回同短码（long_url 加索引查重）。
+    4. **跳转链路**：GET 短码 → Redis 查 → 未命中查 DB 回填 → **302** 跳转（301 会被浏览器缓存导致统计失真，302 才能记点击）→ 异步发点击事件（MQ）供统计。
+    5. **高并发优化**：缓存前置挡读（命中率 95%+）；非法短码布隆过滤器直拒；热点码本地缓存；过期清理任务 + 归档。
+    6. **加分点**：能算容量与 QPS 并推导架构；安全（防钓鱼跳转白名单、防刷限流）；自定义短码（用户指定别名）与系统码冲突处理。
+
+- title: "单例 Bean 注入 prototype Bean 会发生什么？怎么让 prototype 真的每次新建？"
+  category: SPRING
+  difficulty: 2
+  tags: ["作用域", "注入"]
+  position_tags: ["java"]
+  answer: |
+    1. **问题**：singleton 在容器启动时注入一次 prototype——之后**永远用同一个实例**，prototype 语义失效（只"prototype 了一次"）。
+    2. **三种正确姿势**：
+       - **ObjectProvider<T> / ObjectFactory<T>**：注入"获取器"，每次 getObject() 找容器要新实例；
+       - **@Lookup 方法注入**：抽象方法标 @Lookup，Spring 生成覆写返回新实例（方法不能有参数注入）；
+       - **ApplicationContext.getBean()** 手动取（耦合容器，次选）；JSR-330 Provider<T> 等价方案。
+    3. **原理**：注入的是"延迟解析"而非实例——singleton 持有的是获取逻辑不是对象。
+    4. **相关坑**：prototype Bean 容器不管销毁回调（资源要自己释放）；request/session 作用域 Bean 注入 singleton 需要 scoped proxy（aop:scoped-proxy / @Scope(proxyMode=TARGET_CLASS)）。
+    5. **加分点**：能讲 scoped proxy 的代理转发机制；配置中心的 @RefreshScope 动态刷新就是同一机制的应用。
+
+- title: "Kafka 为什么这么快？"
+  category: DISTRIBUTED
+  difficulty: 2
+  tags: ["Kafka", "高性能"]
+  position_tags: ["backend", "java", "ai_app"]
+  answer: |
+    1. **顺序写**：消息 append 到分区日志文件末尾（磁盘顺序写 ≈ 内存随机写速度），零寻址开销。
+    2. **零拷贝**：消费者拉取用 sendfile 系统调用——数据从页缓存直接到网卡，跳过用户态两次拷贝与内核态切换。
+    3. **页缓存**：读写全走 OS page cache（不自己管内存），写靠 OS 异步刷盘、读命中率高（热点消息全在缓存）；进程重启缓存仍在（相比 JVM 堆缓存的优势）。
+    4. **批量与压缩**：生产者攒批（linger.ms/batch.size）+ 压缩（lz4/zstd）减少网络与 IO 次数；broker 端整批存储转发。
+    5. **分区并行**：topic 分区多副本，多 broker 并行读写；消费组水平扩展。
+    6. **加分点**：能画"producer 批量 → page cache → 顺序文件 → sendfile"链路图；对比 RocketMQ（堆外内存 + 读写分离）与 RabbitMQ 的架构差异；index 稀疏索引加速查找。
+
+- title: "消息队列如何保证消息不丢？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["消息队列", "可靠性"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **三段链路各自保证**：
+       - **生产端**：同步发送 + 确认（Kafka acks=all + retries；RocketMQ 同步 flush）；发送失败重试与本地消息表兜底（先落库后发送，定时补偿）；
+       - **Broker 端**：副本机制（Kafka min.insync.replicas=2 + acks=all 不接受单副本写入；RocketMQ 同步刷盘 + 主从同步刷盘可选）；不做"写内存即成功"；
+       - **消费端**：**先处理完再提交 offset**（业务幂等前提下），避免"提交了没处理"丢失；关闭自动提交或用手动 ACK。
+    2. **一致性代价**：acks=all + 同步刷盘 → 吞吐下降——按业务分级（金融全开、日志异步）。
+    3. **兜底**：消息可追溯（Kafka 日志保留）、对账任务（发送表 vs 业务表）、死信队列人工介入。
+    4. **加分点**：能画生产/broker/消费三段图并标注各自配置项；leader 切换时的数据窗口（unclean.leader.election 关闭防丢）。
+
+- title: "消息重复消费怎么处理？顺序消费怎么保证？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["消息队列", "幂等", "顺序"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **重复不可避免**：重试机制、rebalance、at-least-once 语义——**防御目标是"重复不产生副作用"= 消费端幂等**。
+    2. **幂等方案**：
+       - **唯一键去重**：消息带 msgId/业务单号，消费前 Redis SETNX 或去重表判重；
+       - **业务幂等**：状态机条件更新（WHERE status='INIT'）、数据库唯一索引兜底、upsert；
+       - 分层：Redis 快判重（拦截绝大多数）+ DB 唯一约束硬保证。
+    3. **顺序消费**：
+       - **生产端**：同 key（订单号）路由到同一分区（Kafka hash key / RocketMQ MessageQueueSelector）；
+       - **Broker 端**：分区内天然有序；
+       - **消费端**：单线程消费该分区（Kafka 分区只属一个消费者；RocketMQ MessageListenerOrderly + 分区锁）——**牺牲并行换顺序**，热点 key 分区倾斜要拆 key（订单号+子序号）；
+       - 全局顺序 vs 分区顺序：全局单分区性能差，绝大多数业务只要"同一单内有序"。
+    4. **加分点**：rebalance 导致的瞬时重复与乱序（消费端幂等是根本解）；顺序消息的失败重试会阻塞后续（RocketMQ 顺序消费的坑）。
+
+- title: "CAP 和 BASE 理论讲一下？"
+  category: DISTRIBUTED
+  difficulty: 2
+  tags: ["CAP", "BASE", "理论"]
+  position_tags: ["backend", "java", "dba"]
+  answer: |
+    1. **CAP**：网络分区（P）发生时，**一致性（C）与可用性（A）只能选一个**——分布式系统必选 P（分区是常态），所以实际是 CP vs AP 的选择。
+    2. **CP**：分区时拒绝不一致的请求（ZooKeeper/etcd/金融）——可用性受损；**AP**：分区时继续服务但数据可能旧（Eureka/Cassandra/社交）。
+    3. **无分区时**：C 和 A 可以兼得（单机房正常情况）——CAP 不是"三选二"的静态标签而是分区时的动态行为。
+    4. **BASE**：对 AP 的工程化延伸——**基本可用**（降级/限流）、**软状态**（允许中间态：同步中/待确认）、**最终一致**（经过一段时间收敛）。
+    5. **实践映射**：注册中心选型（ZK CP vs Eureka AP vs Nacos 可切）；跨机房部署的取舍；"最终一致"的时间窗与用户感知（下单后库存延迟刷新）。
+    6. **加分点**：能举一个具体系统在分区时的行为决策；Paxos/Raft 是 CP 的实现载体。
+
+- title: "一致性哈希的原理？虚拟节点解决什么问题？"
+  category: DISTRIBUTED
+  difficulty: 2
+  tags: ["一致性哈希", "分片"]
+  position_tags: ["backend", "java", "ai_app"]
+  answer: |
+    1. **普通哈希的痛点**：hash(key) % N——节点数变化时几乎所有 key 重新映射（缓存大面积失效雪崩）。
+    2. **一致性哈希**：hash 值域组织成**环（0~2^32）**，节点与 key 都哈希到环上，key 顺时针找到第一个节点归属——节点增减只影响**相邻区段**的 key（移动 1/N），其余不动。
+    3. **虚拟节点**：真实节点少时环上分布不均（数据倾斜）——每物理节点生成 100~200 个虚拟节点散布环上，key 落到虚拟节点再映射真实节点——**均衡负载 + 支持按性能加权**。
+    4. **应用**：Redis Cluster 的槽（思想类似，16384 槽预分配而非纯哈希环）、Memcached 客户端分片、负载均衡（Nginx consistent）、DynamoDB/Cassandra 的分片基础。
+    5. **加分点**：能推数据迁移量（1/N）；带权重负载的虚拟节点数配比；有界负载一致性哈希（Google 论文，避免单节点过载）。
+
+- title: "分布式事务的常见方案对比？（2PC/TCC/SAGA/本地消息表）"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["分布式事务", "一致性"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **2PC/XA**：协调者两阶段（prepare 全部锁定资源 → commit）。强一致；同步阻塞、协调者单点、数据锁定时间长——数据库层 XA 协议，性能差少用。
+    3. **TCC（Try-Confirm-Cancel）**：业务层两阶段——Try 预留资源（冻结额度）、Confirm 确认扣减、Cancel 释放。性能好、控制力强；**开发成本高**（每个操作写三个方法），要处理空回滚/悬挂（见下一题）。Seata TCC 模式。
+    4. **SAGA**：长事务拆成 N 个本地事务，每个配补偿动作，失败逆序补偿——适合长流程/跨公司（订票+酒店+支付）；无隔离性（中间态可见），需要业务容忍。
+    5. **本地消息表/事务消息**：本地事务里写业务 + 消息表（同一 DB 事务），定时任务/MQ 投递，消费端幂等——**最终一致、简单可靠**，RocketMQ 事务消息是标准化实现（half 消息 + 回查）。互联网首选。
+    6. **选型**：能避免分布式事务就避免（同库合并、业务重设计）→ 短事务强一致 TCC/2PC → 长流程 SAGA → 异步解耦本地消息表。
+    7. **加分点**：Seata AT 模式原理（undo log 自动补偿）一嘴；"刚性 vs 柔性事务"的分类话术。
+
+- title: "TCC 的空回滚和悬挂问题怎么解决？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["TCC", "分布式事务"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **空回滚**：Try 没执行（网络丢失/超时），协调者超时触发 Cancel——Cancel 发现**没有 Try 过**却要释放资源。解法：**事务控制表**记录 XID 的 Try 是否执行；Cancel 时查无记录则**插入一条 Cancel 记录**（防后续悬挂 Try 到来）后直接返回成功。
+    2. **悬挂**：Try 被阻塞在网络里迟到，Cancel 已执行完，迟到的 Try 才到——资源被冻结且再无 Cancel 来释放（泄漏）。解法：Try 执行前查控制表——**发现已有 Cancel 记录则拒绝执行**。
+    3. **实现要点**：控制表操作与业务操作同一本地事务（原子）；全框架内建处理（Seata TCC 自动管理）；幂等是共同前提（Try/Cancel 都可能重试多次，按 XID 幂等）。
+    4. **衍生坑**：Confirm/Cancel 的重试策略（指数退避 + 最大次数 + 告警人工）；业务不可回滚项（已发货）——设计上把"可逆动作"放 Cancel。
+    5. **加分点**：能画 Try/Cancel 时序图标注两个问题的发生窗口；对比 SAGA 补偿的类似问题（补偿先于执行到达）。
+
+- title: "Kafka/RocketMQ/RabbitMQ 怎么选？"
+  category: DISTRIBUTED
+  difficulty: 2
+  tags: ["消息队列", "选型"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **Kafka**：超高吞吐（百万级/s）、持久化日志、消费组水平扩展、生态最大（流处理 Flink 原生）。弱项：无原生延迟消息、消息查询弱、单条消息维度功能少。场景：大数据管道、日志采集、事件流、削峰大吞吐。
+    2. **RocketMQ**：Java 生态亲和、**事务消息、延迟消息（任意精度）、顺序消息**、消息查询/轨迹完善，阿里系电商验证。场景：电商交易（订单超时、顺序扣减）、业务解耦。吞吐低于 Kafka 但足够（十万级/s）。
+    3. **RabbitMQ**：路由灵活（exchange 四种）、延迟低（微秒级）、管理界面友好、AMQP 标准。弱项：吞吐低（万级/s）、Erlang 定制难、堆积性能差。场景：中小规模业务、复杂路由、任务队列。
+    4. **Pulsar**：存算分离、多租户、跨地域复制——新一代但生态尚在成长。
+    5. **选型框架**：吞吐与流处理 → Kafka；交易业务特性（事务/延迟/顺序）→ RocketMQ；轻量灵活 → RabbitMQ；已有设施优先（运维熟悉度）。
+    6. **加分点**：能讲 Kafka 为什么不适合做延迟任务（无原生 + 时间轮外挂复杂）；消息堆积下三者行为差异（Kafka 无压力、RabbitMQ 崩）。
+
+- title: "Redis、ZooKeeper、etcd 三种分布式锁的对比？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["分布式锁", "对比"]
+  position_tags: ["backend", "java", "golang"]
+  answer: |
+    1. **Redis 锁**：SET NX PX + 唯一 value + Lua 释放（见 Redis 分布式锁题）；Redisson 看门狗续期。**快、实现普及**；但主从切换可能丢锁（异步复制），Redlock 有争议——适合效率型锁（防重复执行），正确性要求高时配合业务幂等/fencing token。
+    2. **ZooKeeper 锁**：临时顺序节点 + 监听前驱——CP，会话断开锁自动释放（客户端崩溃安全）；**慢**（写要过半数 + watch 级联唤醒羊群效应优化后仍比 Redis 慢）；Curator InterProcessMutex 开箱即用。适合强正确性场景。
+    3. **etcd 锁**：Raft 一致性 + Lease 租约（续租保活）+ 事务 API（compare-and-swap）——CP 且比 ZK 现代（gRPC、watch 更高效），K8s 生态标配。
+    4. **选型**：性能优先容忍极小概率双持 → Redis（绝大多数业务）；正确性绝对优先、量不大 → ZK/etcd；已有设施优先（K8s 环境顺手 etcd）。
+    5. **共同原则**：锁粒度最小化、持有时间短、必须超时、锁内业务幂等——分布式锁只是优化，不能当正确性唯一保证。
+    6. **加分点**：fencing token 的完整论证（锁服务给出递增令牌，存储层校验拒绝旧令牌）；ZK 羊群效应与 Curator 的顺序监听优化。
+
+- title: "Nacos 注册中心的原理？AP 和 CP 模式怎么切换？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["Nacos", "注册中心"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **注册发现流程**：服务启动注册（实例信息：IP/端口/权重/元数据）→ Nacos 存储 → 消费者订阅（push+pull 结合：客户端定时拉 + 服务端 UDP/长连接推送变更）→ 调用。
+    2. **健康检查**：临时实例**客户端心跳**（5s 一次，15s 不健康 30s 剔除——AP，Distro 协议）；持久实例**服务端主动探测**（CP，Raft 协议）。
+    3. **AP/CP 选择**：临时实例走 AP（注册发现要可用性——挂了也要能拿到旧列表，总比没有好）；持久配置走 CP。`ephemeral=true/false` 按实例选择，不是全局开关——比 Eureka（纯 AP）/ZK（纯 CP）更灵活。
+    4. **配置中心一体化**：Nacos 同时是配置中心（长轮询 30s 监听变更 + 灰度发布/回滚），与注册中心共用控制台。
+    5. **对比**：Eureka（AP、自我保护）、ZK（CP、选主期间不可用）、Consul（CP、健康检查丰富）；国内 Spring Cloud Alibaba 生态默认 Nacos。
+    6. **加分点**：Distro 协议（AP 分区 + 异步复制 + 定时对账）的原理；推送为什么从 UDP 演进到 gRPC 长连接（2.x）。
+
+- title: "什么时候该拆微服务？拆分原则是什么？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["微服务", "架构"]
+  position_tags: ["backend", "java", "fullstack"]
+  answer: |
+    1. **默认不拆**：微服务成本真实存在——分布式事务、网络故障面、运维复杂度（部署/监控/链路 ×N）、团队接口成本。**模块化单体**（清晰边界 + 防腐层）是绝大多数阶段的正确答案。
+    2. **拆分信号**：独立伸缩（某模块流量/资源特征迥异）、独立部署（多团队发布互相阻塞）、技术栈差异（AI 要 Python）、故障隔离需求、组织规模（康威定律：架构跟团队走）。
+    3. **拆分原则**：**按业务能力/限界上下文拆**（订单/商品/库存），不按技术层拆（DAO 服务是反模式）；**一个服务一个数据库**（禁跨库 join）；**绞杀者渐进拆**（新功能新服务 + 逐步迁移），拒绝大爆炸重写；拆前先铺可观测性（trace/监控/告警）。
+    4. **落地门槛**：容器化与 K8s、CI/CD 成熟、服务治理组件（注册发现/配置/熔断限流）、API 契约管理——不具备先补课。
+    5. **反面警示**：**分布式单体**（服务拆了、数据库共享、接口强耦合）= 付出全部成本零收益；微服务不是终点，规模小强行为单体+清晰模块。
+    6. **加分点**：能按一个真实业务画拆分边界并说明取舍；提"服务粒度=团队粒度"的组织视角（两披萨团队）。
+
+- title: "什么是服务网格（Service Mesh）？Istio 解决什么问题？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["Service Mesh", "Istio"]
+  position_tags: ["backend", "dba", "ai_app"]
+  answer: |
+    1. **动机**：微服务治理逻辑（重试/熔断/加密/认证/流量切分）反复写在每个服务的 SDK 里——**多语言成本高、升级难、逻辑与业务耦合**。
+    2. **架构**：把治理能力下沉到 **Sidecar 代理**（每个 Pod 旁挂 Envoy），业务进程零侵入；所有流量经 sidecar——"服务间通信的基础设施层"。控制面（Istiod：配置下发/证书管理）+ 数据面（Envoy）。
+    3. **能力清单**：流量管理（金丝雀按比例、故障注入混沌测试）、mTLS 自动加密（零信任）、可观测（遥测自动采集）、策略执行（鉴权/限流）。
+    4. **代价**：每请求多两跳 sidecar（延迟 +ms 级）、资源开销、运维复杂度——中小规模单体/Spring Cloud SDK 更划算；大规模多语言微服务才体现价值。
+    5. **演进**：eBPF 绕过 sidecar（Cilium mesh）、Ambient Mesh（无需每 Pod sidecar）——方向是降低代理成本。
+    6. **加分点**：能对比 SDK 治理（Spring Cloud）与 Mesh 治理的适用边界；"Mesh 把治理从业务问题变成基础设施问题"的定位。
+
+- title: "分布式链路追踪的原理？TraceID 在异步和 MQ 里怎么传递？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["链路追踪", "可观测"]
+  position_tags: ["backend", "java", "ai_app"]
+  answer: |
+    1. **数据模型**：**Trace**（一次请求全程）→ **Span**（一段操作，含开始时间/耗时/属性）→ Span 树表达调用层级。SpanContext 携带 traceId/spanId/parentSpanId + 采样标记。
+    2. **传递机制**：跨进程靠**注入/提取载体**——HTTP header（W3C traceparent 标准）、RPC 上下文、MQ 消息属性；进程内用 ThreadLocal（MDC）串日志。
+    3. **异步/MQ 的坑**：线程池切换丢上下文（TTL 装饰任务）；MQ 消费是新线程——**生产者把 traceId 写进消息属性，消费者提取并开启新 span**（parent 指向发送 span）；异步编排（CompletableFuture）要显式传 context。
+    4. **采样**：全量太贵——头部采样（网关决定，整条链路一致）、尾部采样（完成后按错误/慢查询保留，可观测性最优）；OpenTelemetry 标准化协议（取代各家私有 SDK）。
+    5. **生态**：OTel SDK + Collector + 后端（Jaeger/Zipkin/SkyWalking/SigNoz）；与日志（traceId 关联）和 metrics（ exemplar 联动）构成可观测三支柱。
+    6. **加分点**：能讲 SkyWalking 的字节码增强无侵入方案；尾部采样的实现挑战（跨服务收集齐再决策）。
+
+- title: "最终一致性有哪些落地模式？"
+  category: DISTRIBUTED
+  difficulty: 3
+  tags: ["最终一致", "架构模式"]
+  position_tags: ["backend", "java"]
+  answer: |
+    1. **模式一：本地消息表**：业务与消息同一本地事务落库 → 定时任务扫未发送 → 投 MQ → 成功标记。简单可靠、自带重试；消息表要清理。适合可靠性优先的跨服务通知。
+    2. **模式二：事务消息（RocketMQ）**：half 消息（对消费者不可见）→ 本地事务 → commit/rollback → 回查兜底。省去消息表，依赖 MQ。
+    3. **模式三：事件驱动 + CDC**：业务变更 → binlog（Canal/Debezium）→ MQ → 下游构建视图（缓存/ES/数仓）——业务代码零侵入，天然不丢（binlog 是真源）。
+    4. **模式四：状态机 + 对账**：异步链路每步状态落库，定时对账修复差异（发送表 vs 业务表）——兜底中的兜底。
+    5. **配套要求**：消费端幂等（必配）、重试 + 死信、监控（积压/延迟/对账差异告警）、用户体验设计（中间态展示"处理中"）。
+    6. **加分点**：能对比四种模式的侵入性/可靠性/实时性三角；"先想清楚能不能用最终一致"（对账成本 vs 强一致成本）。
+
+- title: "反转链表怎么做？合并两个有序链表？判断链表有环？"
+  category: ALGO
+  difficulty: 1
+  tags: ["链表", "双指针"]
+  position_tags: ["backend", "fullstack", "ai_app", "golang"]
+  answer: |
+    1. **反转链表（206）**：三指针迭代——prev/curr，每次 curr.next=prev 后整体右移；O(n)/O(1)。递归版：反转后面部分再接回。易错点：先存 next 再改指针。
+    2. **合并有序链表（21）**：哑结点 dummy + 双指针比大小接尾——O(m+n)；递归版更短但栈深。变体：K 条合并（分治两两合并 O(N logK) 或小顶堆 O(N logK)）。
+    3. **环形链表（141/142）**：**快慢指针**——fast 走 2 slow 走 1，相遇则有环；142 求入环点：相遇后一头从头走，再次相遇即入口（数学：a = c + (b-1) 圈）。易错：fast.next.next 判空前先判 fast.next。
+    4. **链表题通用套路**：哑结点省边界判断；画图确定指针操作顺序；注意**断链顺序**（先存后改）。
+    5. **加分点**：能写出三个题的无 bug 代码（边界：空链表/单节点）； O(1) 空间要求下的选择。
+
+- title: "二叉树的遍历方式？最近公共祖先（LCA）怎么求？"
+  category: ALGO
+  difficulty: 2
+  tags: ["二叉树", "递归"]
+  position_tags: ["backend", "fullstack", "ai_app"]
+  answer: |
+    1. **遍历四式**：前/中/后序（DFS，递归或显式栈）、层序（BFS 队列逐层）。中序 + 前序/后序可唯一重建二叉树；BST 中序 = 升序（验证 BST、找第 k 小）。
+    2. **迭代要点**：前序（栈：先右后左）；中序（一路压左，弹栈访问再转右）；后序（前序变形"根右左"再逆序，或 lastVisited 双条件）。
+    3. **LCA（236）递归解**：后序——左子树找 p、右子树找 q；两边都命中 → 当前节点是 LCA；单边命中上抛；null 返回 null。O(n)。**BST 的 LCA 优化**：值在 p、q 之间即答案（O(h) 不用递归全树）。
+    4. **父指针版**：记录 parent 映射 + 深度，对齐深度后一起上爬——多查询场景用 O(n) 预处理。
+    5. **加分点**：能解释为什么后序遍历天然适合自底向上（子树信息先汇总）；Morris 遍历 O(1) 空间提一嘴。
+
+- title: "LRU 缓存怎么设计和实现？"
+  category: ALGO
+  difficulty: 2
+  tags: ["LRU", "设计", "哈希+链表"]
+  position_tags: ["backend", "fullstack", "ai_app", "java"]
+  answer: |
+    1. **设计目标**：O(1) get/put，容量淘汰最久未使用。**组合：哈希表（定位）+ 双向链表（顺序）**——哈希表 key→链表节点，链表头部最新、尾部最旧。
+    2. **实现细节（LeetCode 146）**：get：命中则移到头部返回；put：存在则更新+移头，不存在则头插，超容删尾（同时删哈希表条目）。**用哑头哑尾结点**消除边界判断。
+    3. **工程实现捷径**：Java `LinkedHashMap(accessOrder=true)` 重写 removeEldestEntry 三行完成；Redis 近似 LRU（采样淘汰）+ LFU（4.0）——工业级还要考虑过期、并发（分段锁/原子操作）、缓存击穿加锁。
+    4. **复杂度**：get/put 均 O(1)；空间 O(capacity)。
+    5. **加分点**：能讲 Redis 为什么不用严格 LRU（维护全序链表开销大，采样 5 个淘汰最旧够用）；LFU（频次 + 衰减）解决"偶发访问挤掉热点"；手写双向链表 addFirst/remove/removeLast 无 bug 是基本功。
+
+- title: "二分查找及其变体（找左边界/右边界/旋转数组）怎么写才不出错？"
+  category: ALGO
+  difficulty: 2
+  tags: ["二分", "边界"]
+  position_tags: ["backend", "fullstack", "ai_app", "java"]
+  answer: |
+    1. **标准模板**：while(left <= right) + mid=(left+right)>>>1（防溢出写法）；匹配则返回。三种写法（<= vs <）区间语义要一致：`[l, r]` 闭区间配 `<=`，`[l, r)` 左闭右开配 `<`——**混用必错**。
+    2. **找左边界（第一个 >= target）**：命中不返回继续收缩（r=mid-1），结束时返回 left；找右边界对称（命中后 l=mid+1）。记忆：**找左排除右侧、找右排除左侧**。
+    3. **旋转数组（33）**：mid 与 left 比较——左半有序则判断 target 是否在左半区间内二分，否则去右半；关键分支：nums[left] <= nums[mid] 判断哪半有序。
+    4. **易错清单**：mid 加法溢出（>>>1 或 left+(r-l)/2）；死循环（区间收缩必须保证 l 或 r 至少移动一格，找边界时用 mid 而非 mid±1 的分支要慎）；旋转数组含重复元素（left==mid 时退化，l++ 缩界）。
+    5. **加分点**：能把"找第一个/最后一个满足条件的位置"抽象成统一模板（lower_bound/upper_bound）；二分答案（把"最小化最大值"问题二分答案区间）的思路。
+
+- title: "手撕快速排序？常见排序算法怎么对比？"
+  category: ALGO
+  difficulty: 2
+  tags: ["排序", "快排"]
+  position_tags: ["backend", "fullstack", "ai_app", "java"]
+  answer: |
+    1. **快排核心**：选 pivot → 分区（小的去左大的去右）→ 递归两侧。**挖坑法/Lomuto/Hoare** 三种分区写法，面试用 Lomuto 最不易错：pivot=a[right]，i 记小于区右界，j 扫描遇小则交换。
+    2. **优化**：随机 pivot / 三数取中（防有序数组退化 O(n²)）；小区间插排；三路分区应对重复元素。
+    3. **复杂度对比**：快排 O(nlogn) 平均/O(n²) 最坏、原地不稳定；归并 O(nlogn) 稳定、O(n) 空间（外排/链表排序用）；堆排 O(nlogn) 原地不稳定（TopK 场景 O(nlogk)）；冒泡/插入 O(n²) 但**近乎有序时插入 O(n)**（TimSort 的基础）。
+    4. **易错**：分区边界（while 条件与 pivot 位置）、递归终止条件、in-place 交换与新建数组混用。
+    5. **加分点**：能讲非比较排序（计数/桶/基数）适用范围；JDK DualPivotQuicksort 的混合策略（小数组插排 + 深度阈值转堆排防退化）；海量数据 TopK 用小顶堆维护 k 个。
+
+- title: "动态规划入门：爬楼梯、打家劫舍、最长递增子序列的思路？"
+  category: ALGO
+  difficulty: 2
+  tags: ["动态规划", "DP"]
+  position_tags: ["backend", "fullstack", "ai_app"]
+  answer: |
+    1. **DP 三要素**：状态定义（dp[i] 什么含义）、转移方程（dp[i] 由哪些更小状态推出）、初始化与顺序。面试叙述按这三步走。
+    2. **爬楼梯（70）**：dp[i] = 到第 i 阶的方案数 = dp[i-1] + dp[i-2]——本质斐波那契；空间可压到 O(1)（滚动变量）。
+    3. **打家劫舍（198）**：dp[i] = 前 i 间最大收益 = max(dp[i-1], dp[i-2]+nums[i])（不偷本间 vs 偷本间）；环形版（213）拆两次线性（偷首不偷尾 / 偷尾不偷首）取 max。
+    4. **最长递增子序列 LIS（300）**：dp[i] = 以 i 结尾的 LIS 长度，O(n²) 双层；**贪心+二分优化 O(nlogn)**：tails[k] 存长度 k+1 的 LIS 最小结尾，二分替换——tails 单调但不是 LIS 本身（要序列需记录前驱）。
+    5. **易错**：初始化边界（dp[0]/dp[1]）、遍历方向（依赖前面的从小到大）、状态定义偏了导致转移写不出（换定义重推）。
+    6. **加分点**：记忆化搜索（自顶向下）与递推（自底向上）等价性；能讲"选与不选"的经典决策结构是大多数 DP 的母题。
+
+- title: "无重复字符的最长子串怎么解？滑动窗口的通用套路？"
+  category: ALGO
+  difficulty: 2
+  tags: ["滑动窗口", "双指针"]
+  position_tags: ["backend", "fullstack", "ai_app"]
+  answer: |
+    1. **滑动窗口模板**：右指针扩张探索，条件破坏时左指针收缩恢复，**每步更新答案**——适合"连续子串/子数组 + 最长/最短/计数"问题。
+    2. **本题（3）**：哈希表记录字符最近位置；右指针扫，遇重复且在窗口内 → 左指针跳到上次出现+1（直接跳比逐个收缩快）；ans = max(ans, r-l+1)。O(n)。
+    3. **通用变体一**："至多 K 个不同字符的最长子串"——哈希计数 + 窗口内 distinct>K 时左收缩至恢复；"字符替换后最长（424）"——窗口内最高频计数 + (len - maxFreq) > k 时收缩。
+    4. **易错**：窗口合法性判断放收缩后；用 left 跳跃时注意记录是否在窗口内（index >= left）；最小窗口题（76）先满足后收缩找最短。
+    5. **加分点**：能总结"窗口内维护什么统计量（频次/distinct/maxFreq）决定题目解法"；双指针三套路（同向窗口/对撞/快慢）各自适用场景。
