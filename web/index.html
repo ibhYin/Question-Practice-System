@@ -36,6 +36,21 @@
           <h1>模拟面试 · 以战养战</h1>
           <p>输入应聘岗位，系统按岗位画像从题库抽题，逐题作答后与「满分答案」对比复盘。</p>
         </div>
+
+        <!-- 🔥 高频八股速刷：一键开刷，与岗位面试共享错题本/遗忘曲线 -->
+        <div class="card quick-card">
+          <h3>🔥 高频八股速刷 <span class="hint">一键开刷 · 同一套错题本与遗忘曲线</span></h3>
+          <div class="chips">
+            <button class="chip hot" :disabled="starting" @click="quickDrill('mix')">高频混合 · 12题</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('MYSQL')">MySQL</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('REDIS')">Redis</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('NETWORK')">网络 HTTP/TCP</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('JVM')">JVM</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('PYTHON')">Python·GIL</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('OS')">OS·进程线程</button>
+            <button class="chip" :disabled="starting" @click="quickDrill('CONCURRENT')">并发</button>
+          </div>
+        </div>
         <div class="start-card card">
           <div class="form-row">
             <label>应聘岗位</label>
@@ -92,8 +107,9 @@
 
       <!-- ============ 管理页（keep-alive 缓存：切 tab 零闪烁，onActivated 静默刷新数据） ============ -->
       <!-- 注意：DOM 模板必须用 kebab-case <keep-alive>，浏览器会把 <KeepAlive> 小写成 keepalive 导致内置组件不生效 -->
-      <keep-alive v-else include="SessionsView,ReviewView,BankView,SettingsView" :max="8">
-        <sessions-view v-if="view === 'sessions'"></sessions-view>
+      <keep-alive v-else include="SessionsView,ReviewView,BankView,SettingsView,MapView" :max="8">
+        <map-view v-if="view === 'map'"></map-view>
+        <sessions-view v-else-if="view === 'sessions'"></sessions-view>
         <review-view v-else-if="view === 'review'"></review-view>
         <bank-view v-else-if="view === 'bank'"></bank-view>
         <settings-view v-else-if="view === 'settings'" @saved="loadHealth"></settings-view>

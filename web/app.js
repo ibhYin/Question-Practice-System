@@ -18,7 +18,7 @@ const CATEGORY_NAMES = {
   MYSQL: 'MySQL', REDIS: 'Redis', JAVA: 'Java 基础', JVM: 'JVM',
   CONCURRENT: '并发编程', SPRING: 'Spring', NETWORK: '计算机网络', SCENARIO: '场景设计',
   AI_APP: 'AI 应用开发', AGENT: 'Agent 开发', FULLSTACK: '全栈开发',
-  OS: '操作系统', DISTRIBUTED: '分布式', ALGO: '算法',
+  OS: '操作系统', DISTRIBUTED: '分布式', ALGO: '算法', PYTHON: 'Python',
 };
 const DIFF_LABEL = { 1: '易', 2: '中', 3: '难' };
 const DIFF_COLOR = { 1: 'ok', 2: 'warn', 3: 'bad' };
@@ -65,10 +65,12 @@ const InterviewView = {
       phase: 'answering',    // answering | result | summary
       summary: null,
       llmEnabled: false,
-      elapsed: 0,            // 本题答题秒数
+      elapsed: 0,            // 本题答题秒数（后台计时，不显示）
       timerId: null,
       pollTimer: null,       // 异步评分轮询
       pollTries: 0,
+      knowledge: [],         // 本题关联考点（知识链路）
+      relatedDetail: null,   // 点击关联考点弹出的详情
     });
 
     function startTimer() {
@@ -137,6 +139,18 @@ const InterviewView = {
       state.loading = false;
     }
 
+    /* 知识链路：结果页加载本题关联考点 */
+    async function loadKnowledge(qid) {
+      state.knowledge = [];
+      try {
+        const k = await api(`/questions/knowledge/${qid}`);
+        state.knowledge = k.related;
+      } catch (e) { /* 关联加载失败不干扰答题 */ }
+    }
+    function openRelated(k) {
+      state.relatedDetail = k;   // k 含 title/category_name/model_answer
+    }
+
     async function submit(skip = false) {
       state.submitting = true; state.error = '';
       try {
@@ -150,6 +164,7 @@ const InterviewView = {
         state.current = r.seq;
         state.phase = 'result';
         if (r.scoring) pollScore();   // 异步评分：立即展示对比，分数轮询补显
+        loadKnowledge(r.question_id); // 后台拉关联考点，不阻塞展示
       } catch (e) { state.error = e.message; }
       state.submitting = false;
     }
@@ -191,7 +206,7 @@ const InterviewView = {
     onMounted(loadProgress);
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -254,6 +269,10 @@ const InterviewView = {
             <div class="box model" v-html="renderAnswer(state.result.model_answer)"></div>
           </div>
         </div>
+        <div v-if="state.knowledge && state.knowledge.length" class="know-strip">
+          <span class="hint" style="flex-shrink:0; align-self:center">🔗 关联考点</span>
+          <span v-for="k in state.knowledge" :key="k.id" class="chip small" @click="openRelated(k)">{{ k.category_name }} · {{ k.title }}</span>
+        </div>
         <div class="answer-actions">
           <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
           <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
@@ -295,6 +314,145 @@ const InterviewView = {
       </div>
     </template>
     <p v-if="state.error && !state.loading" class="error">{{ state.error }}</p>
+
+    <!-- 关联考点详情弹窗（知识链路延伸阅读） -->
+    <div v-if="state.relatedDetail" class="modal-mask" @click.self="state.relatedDetail = null">
+      <div class="modal">
+        <h3>{{ state.relatedDetail.title }}</h3>
+        <div class="q-meta" style="margin-bottom:12px">
+          <span class="badge">{{ state.relatedDetail.category_name }}</span>
+          <span class="badge gray">难度·{{ DIFF_LABEL[state.relatedDetail.difficulty] }}</span>
+        </div>
+        <div class="box model" style="max-height:60vh; overflow:auto" v-html="renderAnswer(state.relatedDetail.model_answer || '（暂无满分答案）')"></div>
+        <div class="answer-actions">
+          <button class="btn" @click="state.relatedDetail = null">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  `,
+};
+
+/* ---------- 知识地图 ---------- */
+const MapView = {
+  name: 'MapView',
+  setup() {
+    const state = reactive({
+      loading: true, error: '', category: 'MYSQL',
+      stats: { nodes: 0, links: 0, linked: 0 },
+      detail: null,   // 点节点弹出的题目+满分答案+关联
+    });
+    let chartInst = null;
+    const chartEl = ref(null);
+
+    const CAT_COLORS = {
+      MYSQL: '#4f5df0', REDIS: '#dc2626', JAVA: '#b45309', JVM: '#7c3aed', CONCURRENT: '#0891b2',
+      SPRING: '#16a34a', NETWORK: '#2563eb', SCENARIO: '#9333ea', AI_APP: '#db2777', AGENT: '#ea580c',
+      FULLSTACK: '#0d9488', OS: '#475569', DISTRIBUTED: '#a16207', ALGO: '#be185d', PYTHON: '#ca8a04',
+    };
+
+    async function load() {
+      state.loading = true; state.error = '';
+      try {
+        const d = await api(`/questions/knowledge/map?category=${state.category}`);
+        state.stats = {
+          nodes: d.nodes.length, links: d.links.length,
+          linked: new Set([...d.links.flatMap(l => [l.source, l.target])]).size,
+        };
+        state.loading = false;
+        nextTick(() => render(d));
+      } catch (e) { state.error = e.message; state.loading = false; }
+    }
+
+    function render(d) {
+      if (!chartEl.value) return;
+      chartInst = chartInst || echarts.init(chartEl.value);
+      const degree = {};
+      d.links.forEach(l => { degree[l.source] = (degree[l.source] || 0) + 1; degree[l.target] = (degree[l.target] || 0) + 1; });
+      chartInst.setOption({
+        tooltip: {
+          formatter: (p) => p.dataType === 'node'
+            ? `${p.data.categoryName}<br/>${p.data.fullName}<br/>答错 ${p.data.wrong_count} 次`
+            : '',
+        },
+        series: [{
+          type: 'graph', layout: 'force', roam: true, draggable: true,
+          force: { repulsion: 130, edgeLength: 60, gravity: 0.08 },
+          label: { show: true, fontSize: 10, color: '#5b6478', formatter: (p) => p.data.name },
+          itemStyle: { borderColor: '#fff', borderWidth: 1 },
+          lineStyle: { color: '#c3cad9', width: 1, curveness: 0.1 },
+          emphasis: { focus: 'adjacency', lineStyle: { width: 2.5, color: '#4f5df0' } },
+          data: d.nodes.map(n => ({
+            id: String(n.id), name: n.name, fullName: d.nodes.find(x => x.id === n.id) && n.name,
+            value: n.id, category: n.category, categoryName: n.category, wrong_count: n.wrong_count,
+            itemStyle: {
+              color: n.wrong_count > 0 ? '#dc2626' : (CAT_COLORS[n.category] || '#64748b'),
+            },
+            symbolSize: 14 + Math.min(n.wrong_count, 5) * 5 + Math.min(degree[n.id] || 0, 6) * 1.5,
+          })),
+          links: d.links.map(l => ({ source: String(l.source), target: String(l.target) })),
+        }],
+      }, true);
+      chartInst.off('click');
+      chartInst.on('click', async (p) => {
+        if (p.dataType !== 'node') return;
+        try {
+          const k = await api(`/questions/knowledge/${p.data.value}`);
+          const node = d.nodes.find(n => n.id === p.data.value);
+          state.detail = {
+            id: p.data.value, title: node ? node.name : p.data.name,
+            category: node ? node.category : '', wrong_count: node ? node.wrong_count : 0,
+            related: k.related, category_name: k.category_name,
+          };
+        } catch (e) { state.error = e.message; }
+      });
+    }
+
+    function pick(c) { state.category = c; load(); }
+    function closeDetail() { state.detail = null; }
+    onMounted(load);
+    onActivated(() => { if (!state.loading) load(); });
+    onUnmounted(() => { if (chartInst) { chartInst.dispose(); chartInst = null; } });
+    return { state, chartEl, pick, closeDetail, renderAnswer, CATEGORY_NAMES };
+  },
+  template: `
+  <div>
+    <div class="card" style="padding:14px 18px; margin-bottom:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+      <b style="font-size:14px">知识地图</b>
+      <select v-model="state.category" class="input" style="width:auto; min-width:130px" @change="pick(state.category)">
+        <option v-for="(name, code) in CATEGORY_NAMES" :key="code" :value="code">{{ name }}</option>
+      </select>
+      <span class="hint">{{ state.stats.nodes }} 个考点 · {{ state.stats.links }} 条关联 · {{ state.stats.linked }} 题入网</span>
+      <span class="hint" style="margin-left:auto">🔴 红点 = 答错过的薄弱点 · 点大小 = 错题次数 + 关联度</span>
+    </div>
+    <div class="card" style="padding:0; height:600px; position:relative">
+      <div v-if="state.loading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center">加载中…</div>
+      <div v-show="!state.loading" ref="chartEl" style="width:100%; height:100%"></div>
+    </div>
+
+    <!-- 节点详情：题目 + 满分答案 + 关联链路 -->
+    <div v-if="state.detail" class="modal-mask" @click.self="closeDetail">
+      <div class="modal">
+        <h3>{{ state.detail.title }}</h3>
+        <div class="q-meta" style="margin-bottom:12px">
+          <span class="badge">{{ state.detail.category_name }}</span>
+          <span v-if="state.detail.wrong_count" class="badge bad">答错 {{ state.detail.wrong_count }} 次</span>
+        </div>
+        <div v-if="state.detail.related.length" style="margin-bottom:14px">
+          <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">🔗 知识链路（{{ state.detail.related.length }} 个关联考点）</h4>
+          <div class="rel-list">
+            <div v-for="r in state.detail.related" :key="r.id" class="rel-item">
+              <span class="badge">{{ r.category_name }}</span>
+              <span class="t">{{ r.title }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="answer-full" v-html="renderAnswer(state.detail.related.find(r => r.id === state.detail.id)?.model_answer || '')"></div>
+        <div class="answer-actions">
+          <button class="btn" @click="closeDetail">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
   `,
 };
@@ -736,12 +894,13 @@ const SettingsView = {
 
 /* ---------- 根组件 ---------- */
 const App = {
-  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView },
+  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView, MapView },
   setup() {
     const view = ref('home');
     const sessionId = ref(null);
     const tabs = [
       { key: 'home', label: '开始面试' },
+      { key: 'map', label: '知识地图' },
       { key: 'sessions', label: '复盘' },
       { key: 'review', label: '错题本' },
       { key: 'bank', label: '题库' },
@@ -865,6 +1024,33 @@ const App = {
       } catch (e) { error.value = e.message; }
       starting.value = false;
     }
+
+    /* 🔥 高频八股速刷：一键按类别开刷（与岗位面试共享全部机制） */
+    const QUICK_PRESETS = {
+      mix: { position: '高频八股专项', count: 12, categories: ['NETWORK', 'MYSQL', 'REDIS', 'JVM', 'OS', 'CONCURRENT'] },
+      MYSQL: { position: 'MySQL 专项', count: 10, categories: ['MYSQL'] },
+      REDIS: { position: 'Redis 专项', count: 10, categories: ['REDIS'] },
+      NETWORK: { position: '网络专项', count: 10, categories: ['NETWORK'] },
+      JVM: { position: 'JVM 专项', count: 10, categories: ['JVM'] },
+      PYTHON: { position: 'Python 专项', count: 8, categories: ['PYTHON'] },
+      OS: { position: '操作系统专项', count: 10, categories: ['OS'] },
+      CONCURRENT: { position: '并发专项', count: 10, categories: ['CONCURRENT'] },
+    };
+    async function quickDrill(key) {
+      const preset = QUICK_PRESETS[key];
+      if (!preset) return;
+      starting.value = true; error.value = '';
+      try {
+        const r = await api('/interviews', {
+          method: 'POST',
+          body: { position: preset.position, count: preset.count, categories: preset.categories },
+        });
+        sessionId.value = r.session_id;
+        view.value = 'interview';
+        resumeSession.value = null;
+      } catch (e) { error.value = e.message; }
+      starting.value = false;
+    }
     function resumeInterview() { sessionId.value = resumeSession.value.id; resumeSession.value = null; view.value = 'interview'; }
     async function abandonResume() {
       if (!confirm('放弃当前进行中的面试？')) return;
@@ -883,7 +1069,7 @@ const App = {
     return {
       view, tabs, health, go, sessionId,
       position, count, categories, picked, toggleCat, starting, error, llmEnabled,
-      startInterview, stats, chart, loadHealth,
+      startInterview, quickDrill, stats, chart, loadHealth,
       resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished,
     };
   },

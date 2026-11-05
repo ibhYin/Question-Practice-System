@@ -11,7 +11,7 @@ from .redis_client import rdb
 CATEGORIES = [
     "MYSQL", "REDIS", "JAVA", "JVM", "CONCURRENT", "SPRING", "NETWORK", "SCENARIO",
     "AI_APP", "AGENT", "FULLSTACK",
-    "OS", "DISTRIBUTED", "ALGO",
+    "OS", "DISTRIBUTED", "ALGO", "PYTHON",
 ]
 
 CATEGORY_NAMES = {
@@ -29,6 +29,7 @@ CATEGORY_NAMES = {
     "OS": "操作系统",
     "DISTRIBUTED": "分布式",
     "ALGO": "算法",
+    "PYTHON": "Python",
 }
 
 # 各岗位画像：类别 -> 出题权重
@@ -36,13 +37,13 @@ PROFILES = {
     "java": {"MYSQL": 3, "REDIS": 3, "JAVA": 2, "CONCURRENT": 2, "JVM": 1, "SPRING": 2, "NETWORK": 1, "SCENARIO": 1, "OS": 2, "DISTRIBUTED": 1, "ALGO": 1},
     "backend": {"MYSQL": 4, "REDIS": 4, "JAVA": 1, "NETWORK": 1, "SCENARIO": 2, "OS": 1, "DISTRIBUTED": 2, "ALGO": 1},
     "golang": {"MYSQL": 3, "REDIS": 3, "NETWORK": 2, "SCENARIO": 2, "OS": 1, "DISTRIBUTED": 1, "ALGO": 1},
-    "python": {"MYSQL": 3, "REDIS": 3, "NETWORK": 1, "SCENARIO": 2, "ALGO": 1},
+    "python": {"MYSQL": 3, "REDIS": 3, "NETWORK": 1, "SCENARIO": 2, "ALGO": 1, "PYTHON": 3},
     "cpp": {"MYSQL": 3, "REDIS": 3, "NETWORK": 2, "SCENARIO": 2, "OS": 2, "ALGO": 1},
     "dba": {"MYSQL": 5, "REDIS": 4, "NETWORK": 1, "SCENARIO": 1},
     "test": {"MYSQL": 2, "REDIS": 2, "NETWORK": 1, "SCENARIO": 2},
     "frontend": {"NETWORK": 2, "SCENARIO": 2, "MYSQL": 1},
     "os_specialist": {"OS": 4, "MYSQL": 2, "REDIS": 1, "NETWORK": 2, "DISTRIBUTED": 1},
-    "ai_app": {"AI_APP": 5, "AGENT": 2, "MYSQL": 2, "REDIS": 2, "SCENARIO": 2, "NETWORK": 1, "ALGO": 1},
+    "ai_app": {"AI_APP": 5, "AGENT": 2, "MYSQL": 2, "REDIS": 2, "SCENARIO": 2, "NETWORK": 1, "ALGO": 1, "PYTHON": 1},
     "agent": {"AGENT": 5, "AI_APP": 3, "MYSQL": 1, "REDIS": 1, "SCENARIO": 2, "ALGO": 1},
     "fullstack": {"FULLSTACK": 5, "MYSQL": 2, "REDIS": 2, "NETWORK": 2, "SCENARIO": 1, "ALGO": 1, "OS": 1},
     "default": {"MYSQL": 3, "REDIS": 3, "NETWORK": 1, "SCENARIO": 1},

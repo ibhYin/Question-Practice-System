@@ -113,3 +113,62 @@ def meta():
     return {
         "categories": [{"code": c, "name": CATEGORY_NAMES.get(c, c)} for c in CATEGORIES],
     }
+
+
+# ---------- 知识地图 ----------
+
+
+@router.get("/knowledge/map")
+def knowledge_map(category: str = "", db: DBSession = Depends(get_db)):
+    """类别考点关联图：节点 = 题目，边 = related_ids 关联对"""
+    query = db.query(Question)
+    if category:
+        query = query.filter(Question.category == category)
+    questions = query.all()
+    hot = {int(k): int(v) for k, v in rdb.zrange(interview_svc.HOT_KEY, 0, -1, withscores=True)}
+    nodes = [
+        {
+            "id": q.id,
+            "name": q.title[:24],
+            "category": q.category,
+            "difficulty": q.difficulty,
+            "wrong_count": hot.get(q.id, 0),  # 节点大小/红色标记依据
+        }
+        for q in questions
+    ]
+    idset = {q.id for q in questions}
+    links = []
+    for q in questions:
+        for rid in q.related_ids or []:
+            if rid in idset and rid > q.id:  # 去重：只输出一次边
+                links.append({"source": q.id, "target": rid})
+    return {"nodes": nodes, "links": links, "categories": sorted({q.category for q in questions})}
+
+
+@router.get("/knowledge/{qid}")
+def knowledge_chain(qid: int, db: DBSession = Depends(get_db)):
+    """单题知识链路：关联题列表（点击后可看满分答案）"""
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    rels = q.related_ids or []
+    items = []
+    if rels:
+        for r in db.query(Question).filter(Question.id.in_(rels)).all():
+            items.append(
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "category": r.category,
+                    "category_name": CATEGORY_NAMES.get(r.category, r.category),
+                    "difficulty": r.difficulty,
+                    "tags": r.tags or [],
+                    "model_answer": r.model_answer,
+                }
+            )
+    items.sort(key=lambda x: (x["category"], x["id"]))
+    return {
+        "question_id": qid,
+        "related": items,
+        "category_name": CATEGORY_NAMES.get(q.category, q.category),
+    }

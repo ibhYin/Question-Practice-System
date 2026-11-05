@@ -172,6 +172,44 @@ def evaluate_answer(title: str, model_answer: str, user_answer: str) -> dict:
     return {"score": score, "comment": comment}
 
 
+# ---------- 知识关联 ----------
+
+LINK_SYSTEM = (
+    "你是技术知识图谱专家，判断两道面试题在知识体系上是否相邻"
+    "（同一知识点的不同侧面、原理与应用的关系、或有直接的推导依赖）。"
+    "只输出 JSON，不要输出其他内容。"
+)
+
+
+def judge_question_pairs(pairs: list[dict]) -> list[dict]:
+    """批量判断题目对是否知识相邻。pairs: [{a_id, a_title, b_id, b_title}]，跨类别配对。
+    返回 [{a_id, b_id, linked: true/false}]。
+    """
+    listing = "\n".join(
+        f'{p["a_id"]}. {p["a_title"][:50]} ||| {p["b_id"]}. {p["b_title"][:50]}' for p in pairs
+    )
+    user = (
+        f"以下是面试题配对（左边题id与标题 ||| 右边题id与标题）：\n{listing}\n\n"
+        "判断每对在知识体系上是否值得关联（同知识点不同侧面/原理与应用/直接依赖）。"
+        "标准从严：只在确信有实质知识联系时关联。"
+        '返回 JSON：{"results": [{"pair": "a_id-b_id", "linked": true}]}'
+    )
+    text = _chat(
+        [{"role": "system", "content": LINK_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.1,
+    )
+    data = _parse_json(text)
+    out = []
+    for r in data.get("results", []):
+        pair = str(r.get("pair", ""))
+        if "-" not in pair:
+            continue
+        a_id, b_id = pair.split("-", 1)
+        if a_id.isdigit() and b_id.isdigit():
+            out.append({"a_id": int(a_id), "b_id": int(b_id), "linked": bool(r.get("linked"))})
+    return out
+
+
 # ---------- 总评 ----------
 
 SUMMARY_SYSTEM = "你是面试复盘教练，点评一针见血，给出可执行的改进建议。"

@@ -21,6 +21,7 @@ class Question(Base):
     # MANUAL 手动录入 / BUILTIN 内置 / AI 生成
     source: Mapped[str] = mapped_column(String(16), default="MANUAL")
     model_answer: Mapped[str] = mapped_column(Text, default="")  # 满分答案
+    related_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 知识关联题 id（知识地图边）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, onupdate=datetime.now

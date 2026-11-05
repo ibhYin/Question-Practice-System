@@ -1,0 +1,109 @@
+# Python 高频面试题（GIL / 并发 / GC）
+- title: "Python 的 GIL 是什么？为什么 CPython 要有 GIL？"
+  difficulty: 2
+  tags: ["GIL", "CPython", "并发"]
+  position_tags: ["python", "ai_app", "backend", "fullstack"]
+  answer: |
+    1. **定义**：GIL（Global Interpreter Lock，全局解释器锁）是 CPython 解释器中的一把全局互斥锁——**任意时刻只允许一个线程执行 Python 字节码**。即使多线程跑在多核 CPU 上，Python 层面的计算也无法并行。
+    2. **为什么存在**（历史与实现原因）：
+       - CPython 的内存管理（引用计数）**非线程安全**——两个线程同时增减同一对象的 refcount 会计数错乱（漏减 = 内存泄漏，多减 = 提前释放 use-after-free）。一把全局锁是最简单便宜的保安全方案；
+       - 大量 C 扩展（内置类型、第三方库）在无锁假设下编写，去掉 GIL 会破坏整个生态；
+       - 单核时代（1992 年设计）单锁足够，多核普及后成为遗留负担。
+    3. **影响范围**：只锁 **Python 字节码执行**；线程在 IO（网络/磁盘/sleep）、锁等待、以及 C 扩展内部计算（如 NumPy 的 BLAS）时会**主动释放 GIL**——所以 IO 密集多线程仍然有效。
+    4. **规避方式**：CPU 密集用多进程（每进程独立 GIL）或 C 扩展/NumPy/Numba；IO 密集用多线程/asyncio；3.13+ 可尝试 free-threading 构建。
+    5. **加分点**：GIL 是 CPython 的实现细节不是语言规范（Jython/IronPython 无 GIL）；`sys.setswitchinterval`（默认 5ms）控制切换频率。
+
+- title: "GIL 存在时，Python 多线程还有用吗？IO 密集和 CPU 密集怎么选？"
+  difficulty: 1
+  tags: ["GIL", "多线程", "选型"]
+  position_tags: ["python", "ai_app", "backend"]
+  answer: |
+    1. **结论先行**：有用——但只对 **IO 密集** 任务有用。
+    2. **IO 密集（有用）**：线程在等待网络/磁盘/数据库时**释放 GIL**，其他线程趁机执行——10 个并发请求总耗时 ≈ 最慢的那个而非相加。典型：批量调 API、爬虫、文件处理。
+    3. **CPU 密集（无用甚至更慢）**：纯 Python 计算不释放 GIL，多线程只能轮流跑在单核上——总耗时 = 串行 + 线程切换开销，**比单线程还慢**。
+    4. **选型口诀**：
+       - CPU 密集 → **multiprocessing**（每进程独立解释器和 GIL，真并行）或 C 扩展/NumPy/PyPy；
+       - IO 密集、任务量大（千级）→ **asyncio**（单线程事件循环，协程切换成本最低）；
+       - IO 密集、任务量中等、代码简单 → **threading**；
+       - 混合型 → 进程池 + 各进程内协程/线程。
+    5. **加分点**：实测数据（timeit 对比三种方案）；提到 concurrent.futures 统一了 ThreadPoolExecutor/ProcessPoolExecutor 的 API，切换成本低。
+
+- title: "Python 里多线程、多进程、协程怎么选？各自的代价是什么？"
+  difficulty: 2
+  tags: ["并发模型", "选型", "asyncio"]
+  position_tags: ["python", "ai_app", "backend"]
+  answer: |
+    1. **三种模型对比**：
+       - **多线程 threading**：共享进程内存（传数据方便）；受 GIL 限制仅 IO 并发；需要锁保护共享状态；切换开销微秒级、每线程默认栈 MB 级，千级线程内存吃紧；
+       - **多进程 multiprocessing**：独立内存空间（GIL 无效、真并行）；但**进程间通信要序列化**（pickle），数据大时 IPC 开销显著；每进程启动成本高、内存独占，几十个进程为实用上限；
+       - **协程 asyncio**：单线程内用户态调度，切换纳秒级、可支撑十万级并发；**全程非阻塞**是纪律要求（一个同步调用就卡死整个循环）；仅适合 IO 密集。
+    2. **决策树**：CPU 密集 → 多进程；IO 密集 + 高并发 + 能全链路 async 化（库支持 aiohttp/asyncpg）→ asyncio；IO 密集 + 中等并发 + 有同步库依赖 → 多线程；混合 → ProcessPool + asyncio。
+    3. **实战坑**：asyncio 里调用了同步阻塞库（requests）整个循环卡住——用 run_in_executor 包一层；多进程返回大对象序列化比计算还慢——尽量传引用拆任务或用共享内存。
+    4. **加分点**：能对比 Go 的 goroutine（栈 KB 级 + 调度器真并行）解释 Python 协程仍受限 GIL；提 Python 3.12+ 的 per-interpreter GIL（子解释器）新路线。
+
+- title: "Python 的内存管理和垃圾回收机制讲一下？循环引用怎么处理？"
+  difficulty: 2
+  tags: ["GC", "内存管理", "引用计数"]
+  position_tags: ["python", "ai_app"]
+  answer: |
+    1. **主机制：引用计数（RC）**：每个对象记录被引用次数，归零**立即**回收——确定性、无停顿，这是 Python 内存管理的基石。
+    2. **RC 的死穴：循环引用**——a.b = b; b.a = a，互相引用使两者 refcount 永不为零，单靠 RC 永远无法回收。
+    3. **辅助：分代 GC**（gc 模块）专治循环引用：
+       - 只追踪**容器对象**（list/dict/实例等，原子类型不产生环）；
+       - **三代分代假设**：越新的对象越可能早死——新对象频繁扫描，熬过多轮回收的晋升老年代、扫描频率降为 1/10；
+       - 算法：从根（GC roots）做可达性标记，**不可达的环整体回收**；对象带 `PyGC_Head` 链表结构支持遍历。
+    4. **弱引用**：`weakref` 不增加引用计数，是打破环的主动手段（缓存、父子双向引用场景）。
+    5. **实践坑**：`__del__` 方法让环不可回收（3.4 前）；gc.freeze() 在 fork 服务中减少 COW（Django/gunicorn 用）；gc.disable() 高性能场景（确认无环时）——如 gunicorn 默认不关。
+    6. **加分点**：pymalloc 的 arena/pool/object 三级内存池（小对象复用）；3.12 的 immortal objects（永不死的 None/True，多 fork 更省）。
+
+- title: "asyncio 的事件循环是怎么工作的？它和 GIL 什么关系？"
+  difficulty: 3
+  tags: ["asyncio", "事件循环", "协程"]
+  position_tags: ["python", "ai_app"]
+  answer: |
+    1. **事件循环本质**：一个单线程的调度器——维护就绪队列（可立即跑的协程）和 IO 多路复用器（selector/poll/epoll，跟 Redis 同源）——循环：取就绪协程跑到 await 挂起点 → 挂起时注册 IO 回调 → 等 IO 就绪唤醒对应协程。
+    2. **协程机制**：`async def` 函数是协程对象（不执行），`await` 借 yield from 挂起自身并把控制权还给循环——**协作式调度**：协程不主动让出（无 await 的死循环）会饿死所有协程。
+    3. **与 GIL 的关系**（常见误区）：asyncio **不是为了绕开 GIL**——它解决"IO 等待时单线程浪费"的问题（线程切换 vs 协程切换的成本差 100 倍）；单线程事件循环内本来就只有一个执行流，GIL 不构成额外限制。CPU 并发仍然需要多进程。
+    4. **对比 Node**：思想同源（libuv 事件循环 + 单线程），Node 原生异步库齐全、Python 生态里同步库更多——**async 化是 Python 的工程纪律**。
+    5. **实践**：`asyncio.gather` 并发、`Semaphore` 限流、`run_in_executor` 兜底同步调用、uvloop 提速 2-4 倍；调试用 `python -X dev` 与 slow-callback 告警。
+    6. **加分点**：Task/Future 的区别（Task 驱动协程、Future 是结果占位）；asyncio 的 TimeoutError 与 3.11 的 asyncio.timeout 上下文。
+
+- title: "哪些操作会释放 GIL？写 C 扩展时怎么主动释放？"
+  difficulty: 3
+  tags: ["GIL", "C扩展", "NumPy"]
+  position_tags: ["python", "ai_app"]
+  answer: |
+    1. **CPython 内置的释放点**：
+       - **阻塞 IO**：socket recv/send、文件读写（调用系统的阻塞等待前 `Py_BEGIN_ALLOW_THREADS`）、time.sleep、锁的 acquire 等待；
+       - **批量 C 计算**：sort()、正则 re、hash 大对象的部分路径、json 序列化大文档等在 C 层处理时不持有 GIL 的时间窗口。
+    2. **C 扩展主动释放**：进入纯 C 计算段前 `Py_BEGIN_ALLOW_THREADS`（释放 GIL）、结束 `Py_END_ALLOW_THREADS`（重申请）——但**操作 Python 对象必须持有 GIL**，所以只适合"拿到裸指针后做纯内存计算"的场景。
+    3. **生态收益**：NumPy/SciPy 的 BLAS 矩阵运算释放 GIL → 多线程调度真并行；这是"Python 做 CPU 并行"的现实路径之一（用 NumPy 而不是 Python for 循环）。
+    4. **设计权衡**：释放/重获 GIL 有开销，粒度太细得不偿失；C 扩展持有 GIL 返回 Python 前要保证不引用已释放对象。
+    5. **加分点**：PyTorch 的多线程 DataLoader 正是"IO 释放 GIL + 多进程"组合；解释为什么 `requests` 是阻塞的（不释放 GIL 于等待 CPU 段）而 aiohttp 要重写协议栈。
+
+- title: "CPython 为什么慢？有哪些让 Python 代码变快的手段？"
+  difficulty: 2
+  tags: ["性能", "PyPy", "Cython", "优化"]
+  position_tags: ["python", "ai_app", "backend"]
+  answer: |
+    1. **慢在哪**：解释执行（字节码逐条 dispatch）+ 一切皆对象（int 装箱、动态类型每次属性查找走 dict/MRO）+ GIL 限制并行。同为脚本语言，它比 JS 慢主要因为 V8 有 JIT 而 CPython 没有。
+    2. **优化层次（从工程到极端）**：
+       - **算法与数据结构**：O(n²) → O(nlogn) 的收益大于一切微优化；
+       - **用对库**：NumPy 向量化（循环下沉到 C）、pandas、polars——Python 写调度，C 干计算；
+       - **解释器层**：PyPy（JIT，长跑任务 4-10 倍）、Python 3.11+ 的自适应解释器（Faster CPython，纯免费提速 1.2~1.5 倍）；
+       - **编译层**：Cython/Numba（JIT 数值）/mypyc——热点函数静态化；
+       - **并行层**：多进程、joblib、分布式。
+    3. **写法细节**：局部变量比全局快（LOAD_FAST vs LOAD_GLOBAL）、避免循环内重复求值、字符串拼接用 join、生成器省内存、slots 实例省内存 30%+。
+    4. **profile 先行**：cProfile/py-spy 定位热点再优化——"没有测量就没有优化"。
+    5. **加分点**：3.13 JIT（copy-and-patch，尚在早期）方向确认 CPython 团队也在跟进；提 C 扩展的 ABI 稳定与调用开销。
+
+- title: "Python 3.13 的 free-threading（no-GIL）是怎么回事？生产能用了吗？"
+  difficulty: 3
+  tags: ["free-threading", "GIL", "版本演进"]
+  position_tags: ["python", "ai_app"]
+  answer: |
+    1. **是什么**：PEP 703 提出的**实验性无 GIL 构建**（`--disable-gil` 编译，即 free-threaded build）——把全局锁改为**细粒度锁**（biases locking：每个对象一把锁 + 偏置优化单线程路径），引用计数改为"分片 + 即时衰减"等无锁化方案，多线程 Python 代码真并行。
+    2. **兼容与代价**：C 扩展需重编译且标注 thread-safe；单线程性能下降约 5-40%（3.13 实测约 5%目标仍在收敛）；部分三方库（NumPy 2.1+ 等）已发布支持版，但生态整体仍在迁移。
+    3. **现状（截至 3.13/3.14）**：官方标记 **experimental**——可以测试验证，**不建议生产**；与 3.12 的 per-interpreter GIL（PEP 684，每子解释器一把 GIL）并列为去 GIL 的两条路线。
+    4. **为什么这次能成**（对比 1999 失败的 GIL 移除尝试）：no-GIL 分支社区维护 5 年成熟方案 + 微软资助 + 核心团队背书 + 基准测试证明"单线程仅小幅损失换真并行"。
+    5. **工程判断**：多核 CPU 密集的 Python 场景当前仍应选多进程/NumPy；跟踪 free-threading 的版本演进即可，面试表达"了解路线图 + 当前不冒进"最稳。

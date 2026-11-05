@@ -195,6 +195,29 @@ table.q-table tr:hover td { background: #fafbff; }
 .status-line { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 14px; }
 code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-size: 13px; }
 
+/* ===== 高频速刷卡 ===== */
+.quick-card { margin-bottom: 18px; padding: 16px 22px; }
+.quick-card .chips { gap: 10px; }
+.chip.hot { background: #fff1eb; border-color: #ff7a45; color: #d4380d; font-weight: 700; }
+.chip.hot:hover { background: #ffe3d6; }
+.chip.small { padding: 3px 12px; font-size: 12px; cursor: pointer; }
+.chip.small:hover { border-color: var(--brand); color: var(--brand); }
+
+/* ===== 知识链路条（答题结果页） ===== */
+.know-strip {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px dashed var(--line);
+}
+
+/* ===== 知识地图 ===== */
+.rel-list { display: flex; flex-direction: column; gap: 6px; }
+.rel-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: #f8f9fc; border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+}
+.rel-item .t { flex: 1; }
+.answer-full { font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+
 @media (max-width: 860px) {
   .home-grid, .compare, .grid2 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
