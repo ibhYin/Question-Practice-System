@@ -1,0 +1,80 @@
+# JVM 知识体系（陈述式背诵卡片）
+category: JVM
+doc:
+  title: "JVM 知识体系全景"
+  content: |
+    JVM 的知识体系沿"内存布局 → 对象分配 → 垃圾回收 → 即时编译 → 生产运维"五段展开：前三段回答内存从哪来、怎么收，后两段回答代码怎么跑得更快、线上问题怎么排查。
+
+    ## 一、运行时内存区域与对象分配
+
+    线程私有三件套：程序计数器（唯一不会 OOM 的区域）、虚拟机栈（栈帧含局部变量表与操作数栈，深递归抛 StackOverflowError）、本地方法栈。线程共享：堆是对象与 GC 的主战场，分新生代（Eden 加两个 Survivor）与老年代；方法区 JDK8 后由元空间实现，使用本地内存，字符串常量池自 JDK7 起移到堆。对象分配后并不急于进老年代：默认熬过 15 次 Minor GC 晋升（对象头年龄只有 4 bit），大对象直接进老年代，动态年龄判断允许同龄对象整体提前晋升，Survivor 放不下走空间分配担保。
+
+    ## 二、垃圾判定、收集算法与收集器
+
+    垃圾判定用可达性分析而非引用计数：从 GC Roots（栈帧局部变量、静态变量、常量、JNI 引用）出发，不可达即可回收。三大算法各有分工：标记-清除简单但有碎片；标记-复制无碎片、适合存活率低的新生代（Eden:S0:S1=8:1:1 的来历）；标记-整理无碎片但移动对象慢，适合老年代；分代理论把它们组合起来。收集器沿这条线演进：CMS 四阶段并发但留浮动垃圾与碎片，已被移除；G1 用 Region 化布局与按回收价值排序实现可预测停顿（MaxGCPauseMillis），是 JDK9+ 默认；ZGC 靠着色指针与读屏障做到停顿 1ms 以内且与堆大小无关。
+
+    ## 三、即时编译与编译期优化
+
+    解释执行快启动、JIT 高峰值，热点探测靠方法调用计数器与回边计数器；分层编译用 C1 快速预热、C2 深度优化（内联、逃逸分析、向量化）。逃逸分析衍生三项优化：标量替换让对象根本不创建，锁消除删除线程内同步，栈上分配在 HotSpot 中由标量替换实现等价效果；CodeCache 满会停止编译导致性能退化，大项目要预留。
+
+    ## 四、元空间与类的生命周期
+
+    元空间放类元数据，默认上限受物理内存约束，需显式设 MaxMetaspaceSize；动态生成类（CGLIB、Groovy、反射 inflation、热部署）与类加载器泄漏是元空间增长的两大来源；类卸载要求加载器被回收、类无实例、无引用三者同时满足。
+
+    ## 五、生产运维：参数与排查
+
+    参数层面：Xms 与 Xmx 相等防抖动，MaxMetaspaceSize 与 MaxDirectMemorySize 必配，可观测三件套（OOM 自动 dump、统一 GC 日志、ErrorFile）是留现场的关键，容器环境仍应显式指定 Xmx。排查层面：CPU 飙高走 top → top -Hp → 十六进制 → jstack 四步；OOM 靠 dump 加 MAT 支配树找持有者；Full GC 频繁先看老年代回收后是否下降、是否 System.gc、是否大对象与晋升失败。GC 调优的原则是先定位根因再调参，调参是最后手段。
+
+    这五段构成闭环：内存布局决定分配与回收行为，收集器与 JIT 决定性能形态，元空间决定类生命周期，而运维参数与排查工具链把前面所有知识落到线上问题处理。
+cards:
+  - title: "JVM 运行时内存区域的划分"
+    content: "线程私有：程序计数器记录字节码行号，唯一不会 OOM；虚拟机栈承载栈帧（局部变量表、操作数栈、动态链接、返回地址），深递归抛 StackOverflowError；本地方法栈服务 native 方法。线程共享：堆是对象与 GC 主战场，分新生代（Eden 加两个 Survivor）与老年代；方法区 JDK8 后由元空间实现，用本地内存不受堆上限约束；字符串常量池 JDK7 起移到堆。另有 NIO 直接内存，不在堆但受机器内存限制。"
+    points: ["线程私有：程序计数器、虚拟机栈、本地方法栈", "程序计数器唯一不会 OOM；栈深递归抛 StackOverflow", "堆分新生代与老年代，是 GC 主战场", "JDK8 方法区由元空间实现，用本地内存", "字符串常量池 JDK7 起移到堆"]
+  - title: "对象进入老年代的四种途径"
+    content: "一是年龄达标：每熬过一次 Minor GC 年龄加一，默认 15 岁晋升，上限源于对象头年龄只有 4 bit。二是大对象直接进入：超过 PretenureSizeThreshold 或超过 G1 region 一半（Humongous），避免短命大对象在 Survivor 间来回复制。三是动态年龄判断：同龄及以下对象总大小超过 Survivor 一半，达到该年龄直接晋升。四是 Survivor 放不下：走空间分配担保直接进老年代。"
+    points: ["年龄默认 15 晋升，上限源于对象头 4 bit", "大对象直接进老年代，G1 中超 region 一半为 Humongous", "动态年龄：同龄对象超 Survivor 一半整体晋升", "Survivor 放不下走空间分配担保直接进老年代"]
+  - title: "可达性分析与 GC Roots 的判定方法"
+    content: "JVM 判定垃圾不用引用计数（循环引用无法回收），而用可达性分析：从一组 GC Roots 出发沿引用链搜索，不可达的对象即可回收。GC Roots 包括栈帧局部变量表引用的对象、静态变量引用的对象、常量引用的对象、JNI 引用的对象等。可达性分析需要一致性快照，因此根节点枚举必须 STW，但 HotSpot 用 OopMap 在类加载与安全点记录引用位置，使枚举时间极短；并发标记期间引用变化靠三色标记配合 SATB 或增量更新修正漏标。这套机制是理解各收集器并发标记原理的基础。"
+    points: ["可达性分析替代引用计数，解决循环引用", "GC Roots：栈帧局部变量、静态变量、常量、JNI 引用", "根枚举借 OopMap 在安全点快速完成", "并发标记用三色标记+SATB/增量更新防漏标"]
+  - title: "三大垃圾回收算法与分代收集理论"
+    content: "标记-清除：标记可达对象后清除，实现简单但产生内存碎片、效率一般。标记-复制：内存分两块，存活对象复制到另一半后整块清空，无碎片且复制快，代价是可用内存减半、存活对象多时开销大，因此适合存活率低的新生代，Eden 与两个 Survivor 按 8:1:1 而非对半分配。标记-整理：标记后把存活对象向一端移动，无碎片，但移动对象需 STW 修正引用，速度慢，适合老年代。分代收集理论建立在绝大多数对象朝生夕死的假设上：新生代用复制，老年代用整理或清除，按对象生命周期选择算法。"
+    points: ["标记-清除简单但有碎片", "标记-复制无碎片，适合存活率低的新生代", "标记-整理无碎片但要移动对象，适合老年代", "分代理论：绝大多数对象朝生夕死", "新生代 Eden:S0:S1=8:1:1"]
+  - title: "CMS 收集器的四阶段与缺陷"
+    content: "CMS 以最短停顿时间为目标，四阶段：初始标记 STW 标记 GC Roots 直达对象；并发标记与用户线程同行；重新标记 STW 修正并发期间的变动；并发清除。缺陷有三：对 CPU 资源敏感，并发阶段挤占业务线程；无法处理浮动垃圾，即并发清理期间新产生的垃圾只能下次回收，因此需预留空间；标记-清除算法产生碎片，碎片过多触发 Full GC 时退化为 Serial Old 单线程整理，停顿巨大。CMS 已在 JDK14 移除，老项目仍在其上的应尽快升级到 G1 或 ZGC。"
+    points: ["初始标记、并发标记、重新标记、并发清除四阶段", "浮动垃圾：并发清理期间新垃圾无法本次回收", "标记-清除产生碎片，Full GC 退化 Serial Old 卡顿大", "JDK14 已移除 CMS"]
+  - title: "G1 的 Region 架构与可预测停顿"
+    content: "G1 是 JDK9 起的默认收集器，把堆划成大小相等的 Region，每个可动态扮演 Eden、Survivor、Old 或 Humongous，整体仍分代。核心是可预测停顿：MaxGCPauseMillis（默认 200ms）设目标，G1 跟踪各 Region 回收价值，优先回收垃圾最多的 Region，即 Garbage First 的由来。布局整体是标记-整理、Region 间复制，天然无碎片；并发标记用三色标记加 SATB 处理漏标。"
+    points: ["堆划分为等大 Region，角色动态扮演，仍分代", "MaxGCPauseMillis 默认 200ms，按回收价值排序回收", "优先回收垃圾最多的 Region 即 Garbage First 本义", "整体标记-整理、Region 间复制，无碎片", "并发标记用三色标记+SATB"]
+  - title: "ZGC 与低延迟收集器的演进"
+    content: "ZGC 从 JDK11 实验特性到 JDK15 转正，采用着色指针加读屏障两项核心技术，几乎全阶段并发，停顿低于 1 毫秒且与堆大小无关，支持 TB 级堆，代价是吞吐量略有下降，JDK17 起生产可用并发展出分代 ZGC。选择策略上：一般大堆低延迟场景用 G1 起步即可；对延迟极度敏感、堆超大时上 ZGC；仍在 CMS 的老系统应尽快迁移。收集器演进的主线是停顿不断缩短且与堆规模解耦，这是堆内存持续增长与低延迟业务共同推动的方向。"
+    points: ["着色指针+读屏障实现全阶段并发", "停顿 <1ms 且与堆大小无关，支持 TB 级堆", "JDK15 转正，JDK17+ 生产可用并有分代 ZGC", "一般场景 G1 起步，极致低延迟选 ZGC"]
+  - title: "JIT 即时编译与分层编译"
+    content: "解释器逐条执行字节码，启动快性能低；JIT 把热点代码编译为机器码，慢启动峰值高。热点探测靠方法调用计数器与回边计数器，超阈值触发编译，OSR 支持热循环中途切换。分层编译默认开启：0 层解释，1-3 层 C1 快速编译轻优化并插桩，4 层 C2 深度优化（内联、逃逸分析、向量化），实现快速预热与峰值性能结合。CodeCache 存编译产物，满了停止编译导致性能退化，大项目需调大。"
+    points: ["解释执行快启动，JIT 高峰值，热点探测靠两计数器", "分层编译：C1 快速预热+C2 深度优化", "C2 优化含内联、逃逸分析、向量化", "CodeCache 满则停止编译，需预留"]
+  - title: "逃逸分析与三项编译期优化"
+    content: "逃逸分析是 JIT（C2）分析对象作用域的技术：对象不逃逸出方法或不逃逸出线程时可做激进优化。主流实现是标量替换：把对象拆散成标量直接放寄存器或栈上，对象根本不创建，省掉堆分配与 GC 压力；HotSpot 的栈上分配即由标量替换实现等价效果。锁消除：线程内对象上的 synchronized 直接删除，局部 StringBuffer 的同步开销消失。对象存入数组、返回或异常路径仍会逃逸走堆分配；可用 JMH 加开关对比验证。"
+    points: ["不逃逸出方法/线程的对象可被激进优化", "标量替换拆对象为标量，对象不创建", "HotSpot 用标量替换实现栈上分配的等价效果", "锁消除删除线程内对象上的同步", "JMH+开关可验证，逃逸场景仍走堆"]
+  - title: "方法区到元空间的演进"
+    content: "方法区存类元信息与运行时常量池，JDK7 及之前用永久代实现，受堆上限约束易溢出。JDK7 把字符串常量池移到堆；JDK8 废除永久代改用元空间，类元数据放本地内存，默认上限受物理内存约束，需显式设 MaxMetaspaceSize 防吃光内存。类卸载需同时满足：加载器被回收、类无实例、无引用，因此容器 redeploy、热部署、动态生成类（CGLIB、Groovy、反射 inflation）都可能导致类常驻、元空间持续增长。"
+    points: ["JDK8 废永久代，元空间用本地内存", "字符串常量池 JDK7 已移到堆", "需显式设 MaxMetaspaceSize 防吃光物理内存", "类卸载条件：加载器回收+无实例+无引用", "动态生成类与热部署是元空间增长主因"]
+  - title: "元空间溢出的排查方法"
+    content: "元空间 OOM 的典型来源是动态生成类：CGLIB 每次用不同回调 new Enhancer 会生成新类，还有 Groovy 脚本、JSP 重编译、反射 inflation 与热部署。排查：jstat 元空间指标或 jcmd VM.metaspace 观察持续增长；用 jmap -histo:live 找异常多的类，$EnhancerByCGLIB 数量是直接证据；最后定位生成源，缓存 Enhancer、限制脚本编译，并设 MaxMetaspaceSize 显式上限。"
+    points: ["典型来源：CGLIB/Groovy/JSP/反射 inflation/热部署", "jstat 与 jcmd VM.metaspace 看增长趋势", "jmap -histo:live 找 $EnhancerByCGLIB 类数量", "缓存 Enhancer 或复用代理类从源头治理"]
+  - title: "生产环境的内存与 GC 参数配置"
+    content: "内存三件套：Xms 与 Xmx 相等防抖动；G1 下不设 Xmn 交给自适应；显式设 MaxMetaspaceSize。GC 选择：JDK17 默认 G1 足够，按业务调 MaxGCPauseMillis；超大堆低延迟上 ZGC；Netty 等堆外应用必配 MaxDirectMemorySize。慎用：Xss 默认 1M 别乱调；DisableExplicitGC 会导致直接内存无法经 System.gc 回收，应改配 ExplicitGCInvokesConcurrent。"
+    points: ["Xms=Xmx 防抖动，容器按 limits 的 50~75%", "MaxMetaspaceSize 与 MaxDirectMemorySize 必配", "JDK17 默认 G1，超低延迟用 ZGC", "DisableExplicitGC 卡死堆外回收，换 ExplicitGCInvokesConcurrent"]
+  - title: "可观测性参数与容器环境适配"
+    content: "可观测三件套是生产必配：OOM 自动留现场用 HeapDumpOnOutOfMemoryError 加 HeapDumpPath；统一 GC 日志 JDK9+ 用 Xlog:gc* 输出并轮转；崩溃日志 ErrorFile 保存 hs_err。容器适配：JDK8u191 后默认开启 UseContainerSupport 感知容器内存与 CPU，仍建议显式指定 Xmx 防误判，CPU 感知影响 GC 线程数。与 k8s 配合时先完成 dump 再重启，避免现场丢失。"
+    points: ["HeapDumpOnOutOfMemoryError 自动留尸必配", "JDK9+ 统一日志 -Xlog:gc*，轮转防撑盘", "ErrorFile 保留 hs_err 崩溃现场", "容器默认感知内存限制，仍建议显式 Xmx", "k8s 下先 dump 再重启"]
+  - title: "GC 日志的解读要点"
+    content: "JDK9+ 统一日志每行含时间戳、GC 类型、各代前后占用与耗时；G1 关键行有 Pause Young、Pause Full、Heap 区块占用与 Evacuation 时间。解读关注三个数：单次停顿时长是否达标、停顿频率是否密集、回收后老年代是否真的降下去，降不下去指向泄漏或堆不足。工具链：gceasy、gcplot 可视化，jstat -gcutil 看趋势，MAT 找占用大户，arthas dashboard 实时观察。调优原则是先定位根因再调参，调参是最后手段。"
+    points: ["关注停顿时长、停顿频率、老年代回收后是否下降", "G1 关键行：Pause Young/Full 与 Evacuation", "gceasy/gcplot 可视化，jstat -gcutil 看趋势", "先定位根因再调参，调参是最后手段"]
+  - title: "Full GC 频繁的常见根因与定位"
+    content: "Full GC 频繁的根因：堆太小或泄漏，老年代回收后仍持续上涨，需 dump 分析；元空间不足；System.gc 被显式调用，配 ExplicitGCInvokesConcurrent 缓解；大对象直接进老年代，G1 中 Humongous 打爆 region；晋升过快导致 promotion failed 或 to space exhausted。定位工具链：GC 日志可视化、jstat 看趋势、dump 加 MAT 找占用大户。落脚点常是加内存与修代码里的无上限缓存。"
+    points: ["泄漏标志：老年代回收后仍在涨，dump 定位", "System.gc、元空间不足、大对象都是常见诱因", "promotion failed 指向 Survivor 配置或晋升过快", "调优的尽头是加内存与消除泄漏"]
+  - title: "线上 CPU 飙高的排查步骤"
+    content: "标准四步：top 找到高 CPU 的 Java 进程 pid；top -Hp pid 找到进程内高 CPU 的线程 tid；printf '%x' 把线程号转十六进制；jstack pid 配合 grep nid=0x 定位线程栈。常见元凶：死循环、正则回溯、频繁 GC 的 GC 线程、锁竞争。配合 jstat -gcutil 区分业务热点还是 GC 问题，arthas 的 dashboard 与 profiler 火焰图更快锁定热路径。预防靠上线前压测与合理超时限流。"
+    points: ["top 找进程、top -Hp 找线程、转十六进制、jstack 定位", "常见元凶：死循环、正则回溯、频繁 GC、锁竞争", "jstat -gcutil 区分业务热点还是 GC 问题", "arthas 火焰图快速锁定热路径"]
+  - title: "OOM 的现场保留与 HeapDump 分析"
+    content: "OOM 排查第一步是留现场：配置 HeapDumpOnOutOfMemoryError 与 HeapDumpPath 自动 dump；手动 jmap -dump 会 STW，生产慎用。拿到 hprof 后用 MAT 或 JProfiler 分析：看支配树找最大对象、看泄漏报告定位持有者。常见根因：静态集合只加不删、一次大查询拉全表、ThreadLocal 未 remove、缓存无上限。预防：上线前压测、Xmx 与容器内存匹配、缓存设上限、查询分页。"
+    points: ["HeapDumpOnOutOfMemoryError 自动留现场优先", "MAT 支配树与泄漏报告定位持有者", "常见根因：静态集合、大查询、ThreadLocal、无上限缓存", "预防：压测、堆与容器匹配、缓存上限、分页"]

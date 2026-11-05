@@ -107,8 +107,9 @@
 
       <!-- ============ 管理页（keep-alive 缓存：切 tab 零闪烁，onActivated 静默刷新数据） ============ -->
       <!-- 注意：DOM 模板必须用 kebab-case <keep-alive>，浏览器会把 <KeepAlive> 小写成 keepalive 导致内置组件不生效 -->
-      <keep-alive v-else include="SessionsView,ReviewView,BankView,SettingsView,MapView" :max="8">
+      <keep-alive v-else include="SessionsView,ReviewView,BankView,SettingsView,MapView,StudyView" :max="8">
         <map-view v-if="view === 'map'"></map-view>
+        <study-view v-else-if="view === 'study'"></study-view>
         <sessions-view v-else-if="view === 'sessions'"></sessions-view>
         <review-view v-else-if="view === 'review'"></review-view>
         <bank-view v-else-if="view === 'bank'"></bank-view>

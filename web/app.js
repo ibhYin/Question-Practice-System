@@ -457,6 +457,146 @@ const MapView = {
   `,
 };
 
+/* ---------- 八股文库（背诵卡片 + 体系长文档，与面试题库分离） ---------- */
+const CARD_STATUS_META = {
+  new: { label: '未学', cls: 'gray' },
+  learning: { label: '待巩固', cls: 'warn' },
+  mastered: { label: '已背熟', cls: 'ok' },
+};
+
+const StudyView = {
+  name: 'StudyView',
+  setup() {
+    const state = reactive({
+      mode: 'cards',            // cards | docs
+      category: 'MYSQL',
+      overview: [],             // 各类进度汇总
+      docs: [], doc: null,      // 文档视图
+      cards: [], idx: 0,        // 卡片视图（当前翻到的卡）
+      flipped: false,
+      loading: true, error: '',
+    });
+
+    const catOverview = computed(() => state.overview.find(o => o.category === state.category) || null);
+
+    async function loadOverview() {
+      try { state.overview = await api('/study/overview'); } catch (e) { /* ignore */ }
+    }
+
+    async function loadCategory() {
+      state.loading = true; state.error = '';
+      try {
+        const [cards, docs] = await Promise.all([
+          api(`/study/cards?category=${state.category}`),
+          api(`/study/docs?category=${state.category}`),
+        ]);
+        // 卡片排序：未学 → 待巩固 → 已背熟（把没背熟的顶到前面）
+        const order = { new: 0, learning: 1, mastered: 2 };
+        state.cards = cards.sort((a, b) => order[a.status] - order[b.status]);
+        state.docs = docs;
+        state.doc = docs.length ? docs[0] : null;
+        if (state.doc) state.doc = await api(`/study/docs/${state.doc.id}`);
+        state.idx = 0; state.flipped = false;
+        loadOverview();
+      } catch (e) { state.error = e.message; }
+      state.loading = false;
+    }
+
+    function pick(c) { state.category = c; loadCategory(); }
+    function setMode(m) { state.mode = m; }
+    function flip() { state.flipped = !state.flipped; }
+    function nextCard() { state.flipped = false; state.idx = Math.min(state.idx + 1, state.cards.length - 1); }
+    function prevCard() { state.flipped = false; state.idx = Math.max(state.idx - 1, 0); }
+
+    async function mark(status) {
+      const card = state.cards[state.idx];
+      if (!card) return;
+      try {
+        await api(`/study/cards/${card.id}/status`, { method: 'POST', body: { status } });
+        card.status = status;
+        loadOverview();
+        if (status === 'mastered') nextCard();  // 背熟自动跳下一张
+      } catch (e) { state.error = e.message; }
+    }
+
+    async function openDoc(d) { state.doc = await api(`/study/docs/${d.id}`); }
+
+    const card = computed(() => state.cards[state.idx] || null);
+    onMounted(loadCategory);
+    onActivated(() => { if (state.cards.length || state.docs.length) { loadCategory(); } else { loadCategory(); } });
+
+    return { state, card, catOverview, pick, setMode, flip, nextCard, prevCard, mark, openDoc, loadOverview, renderAnswer, CARD_STATUS_META, CATEGORY_NAMES };
+  },
+  template: `
+  <div>
+    <!-- 顶部：类别选择 + 形态切换 + 进度 -->
+    <div class="card study-top">
+      <select v-model="state.category" class="input" style="width:auto; min-width:140px" @change="pick(state.category)">
+        <option v-for="(name, code) in CATEGORY_NAMES" :key="code" :value="code">{{ name }}</option>
+      </select>
+      <div class="chips" style="gap:6px">
+        <button class="chip" :class="{on: state.mode === 'cards'}" @click="setMode('cards')">🃏 背诵卡片</button>
+        <button class="chip" :class="{on: state.mode === 'docs'}" @click="setMode('docs')">📖 体系文档</button>
+      </div>
+      <div v-if="catOverview" class="hint" style="margin-left:auto">
+        {{ catOverview.cards }} 卡 · 已背熟 {{ catOverview.mastered }}（{{ catOverview.progress }}%）· 待巩固 {{ catOverview.learning }}
+      </div>
+    </div>
+
+    <div v-if="state.loading" class="card">加载中…</div>
+    <div v-else-if="state.error" class="card error">{{ state.error }}</div>
+    <div v-else-if="state.mode === 'docs'">
+      <!-- 文档视图：左目录 + 右正文 -->
+      <div class="study-layout">
+        <div class="card study-toc">
+          <h3>体系文档</h3>
+          <div v-if="!state.docs.length" class="empty">该类别暂无文档</div>
+          <div v-for="d in state.docs" :key="d.id" class="toc-item" :class="{on: state.doc && state.doc.id === d.id}" @click="openDoc(d)">
+            📖 {{ d.title }}
+          </div>
+        </div>
+        <div class="card study-content" v-if="state.doc">
+          <h3>{{ state.doc.title }}</h3>
+          <div class="doc-body" v-html="renderAnswer(state.doc.content)"></div>
+        </div>
+        <div class="card study-content empty" v-else>该类别暂无文档</div>
+      </div>
+    </div>
+    <div v-else>
+      <!-- 卡片视图：翻卡背诵 -->
+      <div v-if="!state.cards.length" class="card empty">该类别暂无卡片</div>
+      <template v-else>
+        <div class="progress-wrap">
+          <span class="badge">{{ state.idx + 1 }} / {{ state.cards.length }}</span>
+          <div class="progress-track"><div class="progress-fill" :style="{width: (state.idx + 1) / state.cards.length * 100 + '%'}"></div></div>
+          <span class="badge" :class="CARD_STATUS_META[card.status].cls">{{ CARD_STATUS_META[card.status].label }}</span>
+        </div>
+        <div class="card flip-card" @click="flip">
+          <div v-if="!state.flipped">
+            <div class="flip-front">{{ card.title }}</div>
+            <div class="hint" style="text-align:center; margin-top:14px">先回忆要点，点击卡片翻开对照</div>
+          </div>
+          <div v-else>
+            <div class="flip-back">{{ card.content }}</div>
+            <div v-if="card.points && card.points.length" class="know-strip" @click.stop>
+              <span class="hint" style="flex-shrink:0; align-self:center">⚡ 关键点</span>
+              <span v-for="(p, i) in card.points" :key="i" class="badge gray">{{ p }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="answer-actions" style="justify-content:center">
+          <button class="btn ghost" :disabled="state.idx === 0" @click="prevCard">← 上一张</button>
+          <button class="btn danger" :disabled="card.status === 'new'" @click="mark('new')">未掌握</button>
+          <button class="btn" :disabled="card.status === 'learning'" @click="mark('learning')">待巩固</button>
+          <button class="btn primary" :disabled="card.status === 'mastered'" @click="mark('mastered')">✓ 已背熟</button>
+          <button class="btn ghost" :disabled="state.idx >= state.cards.length - 1" @click="nextCard">下一张 →</button>
+        </div>
+      </template>
+    </div>
+  </div>
+  `,
+};
+
 /* ---------- 复盘（历史场次） ---------- */
 const SessionsView = {
   name: 'SessionsView',
@@ -894,12 +1034,13 @@ const SettingsView = {
 
 /* ---------- 根组件 ---------- */
 const App = {
-  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView, MapView },
+  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView, MapView, StudyView },
   setup() {
     const view = ref('home');
     const sessionId = ref(null);
     const tabs = [
       { key: 'home', label: '开始面试' },
+      { key: 'study', label: '八股文库' },
       { key: 'map', label: '知识地图' },
       { key: 'sessions', label: '复盘' },
       { key: 'review', label: '错题本' },
@@ -924,7 +1065,7 @@ const App = {
     function go(v) { view.value = v; }
 
     /* ---- Hash 路由：F5 恢复当前页面 + 浏览器前进后退 ---- */
-    const VIEW_HASH = { home: '#/', sessions: '#/sessions', review: '#/review', bank: '#/bank', settings: '#/settings' };
+    const VIEW_HASH = { home: '#/', sessions: '#/sessions', review: '#/review', bank: '#/bank', settings: '#/settings', map: '#/map', study: '#/study' };
     function syncHash() {
       const target = view.value === 'interview' && sessionId.value
         ? `#/interview/${sessionId.value}`
@@ -939,13 +1080,13 @@ const App = {
         view.value = 'interview';
         return;
       }
-      view.value = { '#/': 'home', '#/sessions': 'sessions', '#/review': 'review', '#/bank': 'bank', '#/settings': 'settings' }[h] || 'home';
+      view.value = { '#/': 'home', '#/sessions': 'sessions', '#/review': 'review', '#/bank': 'bank', '#/settings': 'settings', '#/map': 'map', '#/study': 'study' }[h] || 'home';
       if (view.value !== 'interview') sessionId.value = null;
     }
     window.addEventListener('hashchange', applyHash);
     // 视图/session 变化同步到地址栏
     watch([view, sessionId], syncHash);
-    const VIEW_TITLES = { home: '开始面试', interview: '面试中', sessions: '复盘', review: '错题本', bank: '题库', settings: '设置' };
+    const VIEW_TITLES = { home: '开始面试', interview: '面试中', study: '八股文库', map: '知识地图', sessions: '复盘', review: '错题本', bank: '题库', settings: '设置' };
     watch(view, (v) => {
       document.title = (VIEW_TITLES[v] ? VIEW_TITLES[v] + ' · ' : '') + '面试刷题系统';
       if (v === 'home') { loadStats(); loadHealth(); loadMeta(); checkResume(); }

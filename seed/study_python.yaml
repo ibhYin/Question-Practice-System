@@ -1,0 +1,69 @@
+# Python 核心背诵卡片（陈述式）
+category: PYTHON
+doc:
+  title: "Python 核心知识体系全景"
+  content: |
+    Python 面试的知识主线是"并发模型与 GIL → 内存与 GC → 性能优化 → 语言机制"四段。
+
+    一、并发模型与 GIL。CPython 的 GIL 是一把全局互斥锁，任意时刻只允许一个线程执行 Python 字节码，根源是引用计数的非线程安全。它只锁字节码执行：线程在阻塞 IO、锁等待和 C 扩展计算（NumPy/BLAS）时会主动释放 GIL，所以 IO 密集任务多线程依然有效，CPU 密集任务多线程反而因切换开销更慢。选型口诀：CPU 密集用多进程，IO 密集高并发且能全链路 async 化用 asyncio，IO 密集中等并发或有同步库依赖用多线程，混合型用进程池加协程。asyncio 是单线程事件循环加协作式调度，协程在 await 处挂起让出控制权，切换纳秒级；它不是为了绕开 GIL，而是用低成本切换吃满 IO 等待窗口，代价是全链路非阻塞的纪律——混入同步库会卡死整个循环。CPython 3.13 的 free-threading 构建（细粒度锁加分片引用计数）是去 GIL 的实验路线，单线程有损耗、生态迁移中，生产尚不建议。
+
+    二、内存与 GC。主机制是引用计数：归零立即回收，确定性强、无停顿；死穴是循环引用，由分代 GC 兜底——只追踪容器对象，基于"越新越早死"的假设分三代扫描，从 GC roots 做可达性标记，不可达的环整体回收。weakref 不增计数是主动破环手段，pymalloc 三级内存池复用小对象，gc.freeze 优化 fork 服务的写时复制。
+
+    三、性能优化。CPython 慢在解释执行、一切皆对象与 GIL。优化层次从高到低：算法与数据结构 > NumPy 向量化（循环下沉到 C）> 解释器升级（3.11+ 自适应解释器免费提速）> Cython 与 Numba 编译热点 > 多进程并行；profile 先行，没有测量就没有优化。
+
+    四、语言机制。默认参数在 def 时求值一次，可变默认值跨调用共享，必须用 None 哨兵；闭包把外层变量存进 cell 实现装饰器机制，循环闭包的 late binding 要用默认参数固化；赋值是名字绑定，浅拷贝只复制一层、deepcopy 递归复制并用 memo 处理循环引用；is 比身份、== 比值，与 None 比较必须用 is；with 靠 __enter__ 与 __exit__ 协议保证资源确定性释放，__exit__ 返回 True 可吞异常；生成器用 yield 惰性产出，流式处理大文件内存恒定，send 双向通信是协程的语言基础。这些机制细节与并发、性能并列为三条主线。
+cards:
+  - title: "GIL 的定义与存在原因"
+    content: "GIL 即全局解释器锁，是 CPython 中的一把全局互斥锁，任意时刻只允许一个线程执行 Python 字节码，多线程在多核 CPU 上也无法实现 Python 层面的计算并行。存在原因：引用计数内存管理非线程安全，两个线程同时增减同一对象的计数会错乱，一把全局锁是最简单安全的方案；大量 C 扩展在无锁假设下编写，去掉 GIL 会破坏生态；单核时代的设计成为多核时代的遗留负担。GIL 是 CPython 的实现细节而非语言规范，只锁字节码执行。"
+    points: ["全局互斥锁：任意时刻一个线程执行字节码", "根源是引用计数非线程安全", "实现细节而非语言规范，只锁字节码", "setswitchinterval 默认 5ms 控制切换"]
+  - title: "GIL 下多线程仍有用：IO 密集与 CPU 密集的分野"
+    content: "结论先行：GIL 下多线程有用，但只对 IO 密集任务有用。线程在等待网络、磁盘、数据库时会释放 GIL，其他线程趁机执行，十个并发请求总耗时约等于最慢的那个而非相加。CPU 密集任务纯 Python 计算不释放 GIL，多线程只能轮流跑在单核上，总耗时等于串行加切换开销，比单线程还慢。规避方式：CPU 密集用多进程获得真并行，或下沉到 NumPy 等 C 扩展；IO 密集任务量大用 asyncio，中等并发且代码简单用 threading。"
+    points: ["IO 等待释放 GIL，多线程对 IO 密集有效", "CPU 密集多线程比单线程还慢", "CPU 密集用多进程，IO 密集用 asyncio 或 threading", "并发请求总耗时约等于最慢的那个"]
+  - title: "哪些操作会释放 GIL"
+    content: "内置释放点有两类：阻塞 IO——socket 收发、文件读写、time.sleep、锁等待；批量 C 计算——sort、正则、hash、大文档 json 序列化等在 C 层处理时不持有 GIL。C 扩展可主动释放：进纯 C 计算段前 Py_BEGIN_ALLOW_THREADS 释放、结束重申请，但操作 Python 对象必须持有 GIL，只适合裸指针纯内存计算。NumPy、SciPy 的 BLAS 运算释放 GIL，多线程真并行，这是 Python CPU 并行的现实路径之一。"
+    points: ["阻塞 IO 与锁等待自动释放", "C 扩展内纯计算不持有 GIL", "Py_BEGIN 与 END_ALLOW_THREADS 手动控制", "NumPy BLAS 释放 GIL，多线程真并行", "释放粒度太细得不偿失"]
+  - title: "多线程、多进程、协程三者对比"
+    content: "多线程共享进程内存传数据方便，受 GIL 限制仅 IO 并发，需锁保护共享状态，切换微秒级、每线程栈 MB 级，千级线程内存吃紧。多进程独立内存空间，GIL 无效、真并行，但 IPC 要 pickle 序列化，数据大时开销显著，几十个进程是实用上限。协程单线程用户态调度，切换纳秒级、支撑十万级并发，但全程非阻塞是纪律，一个同步调用就卡死整个循环，仅适合 IO 密集。实战坑：asyncio 里调同步库会卡死循环，用 run_in_executor 兜底；多进程返回大对象序列化开销大。"
+    points: ["线程共享内存微秒级切换，进程独立真并行", "协程纳秒级切换，支撑十万级并发", "进程 IPC 要序列化，协程必须全链路非阻塞", "asyncio 里同步库用 run_in_executor 兜底"]
+  - title: "并发模型选型决策树"
+    content: "选型按任务类型分流：CPU 密集用 multiprocessing，每进程独立解释器与 GIL 获得真并行，或下沉到 NumPy、C 扩展；IO 密集任务量上千且能全链路 async 化（aiohttp、asyncpg）选 asyncio，切换成本最低；IO 密集、任务量中等、有同步库依赖选 threading；混合型用进程池加各进程内协程。判断依据的三个维度是任务瓶颈在 CPU 还是 IO、并发量级、依赖库是否支持异步。"
+    points: ["CPU 密集用多进程，IO 高并发用 asyncio", "IO 中等并发或有同步依赖用 threading", "混合型：进程池加协程", "concurrent.futures 统一两种池的 API"]
+  - title: "asyncio 事件循环的工作原理"
+    content: "事件循环是单线程调度器，维护就绪队列与 IO 多路复用器（epoll）。循环：取就绪协程跑到 await 挂起，注册 IO 回调，IO 就绪后唤醒对应协程。协程：async def 调用后返回协程对象并不执行，await 挂起并把控制权还给循环，是协作式调度——无 await 的死循环会饿死所有协程。实践：gather 并发、Semaphore 限流、run_in_executor 兜底同步、uvloop 提速；调试开 slow-callback 告警。"
+    points: ["单线程调度器加 IO 多路复用（epoll）", "await 挂起让出控制权，协作式调度", "死循环无 await 会饿死整个循环", "gather 并发、Semaphore 限流、uvloop 提速"]
+  - title: "asyncio 与 GIL 的关系：常见误区澄清"
+    content: "常见误区是认为 asyncio 是为了绕开 GIL，实际上两者解决不同问题。asyncio 解决的是 IO 等待时单线程浪费的问题——线程切换微秒级、协程切换纳秒级，成本差百倍；单线程事件循环内本来就只有一个执行流，GIL 不构成额外限制。asyncio 不提供 CPU 并发，CPU 密集任务仍然需要多进程。与 Node 思想同源（事件循环加单线程），区别是 Node 异步库原生齐全，Python 同步库更多，async 化是工程纪律——一个同步调用就破坏非阻塞承诺。"
+    points: ["asyncio 解决 IO 等待浪费，不是绕开 GIL", "协程切换纳秒级，线程切换微秒级", "CPU 并发仍需多进程", "同步库混入会破坏非阻塞承诺"]
+  - title: "引用计数：Python 内存管理的基石与死穴"
+    content: "CPython 内存管理的主机制是引用计数：每个对象记录被引用次数，归零立即回收——确定性、无停顿，这是基石。死穴是循环引用：a.b = b 且 b.a = a 使两者计数永不为零，单靠引用计数无法回收，由 gc 的分代 GC 补救。实践上 weakref 弱引用不增加引用计数，是主动破环的手段，适合缓存与父子双向引用场景。高性能场景可 gc.disable（确认无环时），fork 型服务用 gc.freeze 减少 copy-on-write。"
+    points: ["引用计数归零立即回收，确定无停顿", "循环引用使计数永不为零，是死穴", "weakref 不增计数，主动破环", "gc.freeze 优化 fork 服务的写时复制"]
+  - title: "分代 GC：专治循环引用的辅助回收器"
+    content: "分代 GC 是引用计数的辅助机制，专治循环引用。它只追踪容器对象——list、dict、实例等可能产生环的类型，原子类型不产生环无需追踪。理论基础是分代假设：越新的对象越可能早死，新对象在新生代被频繁扫描，熬过多轮回收的晋升到老年代，扫描频率降为十分之一。算法上从 GC roots 做可达性标记，不可达的环整体回收，对象带 PyGC_Head 链表结构支持遍历。内存分配层面 pymalloc 用 arena、pool、object 三级内存池复用小对象。"
+    points: ["只追踪容器对象，原子类型无环", "分代假设：越新越早死，老年代扫描降频", "从 GC roots 可达性标记，不可达的环整体回收", "pymalloc 三级内存池复用小对象"]
+  - title: "CPython 为什么慢"
+    content: "CPython 慢在三个层面：解释执行，字节码逐条 dispatch，没有编译为机器码；一切皆对象，int 要装箱、动态类型导致每次属性查找走 dict 与 MRO；GIL 限制多核并行。这意味着 Python 的优化思路不是抠语法糖，而是把热点下沉到 C：让 Python 做调度、C 做计算。3.11 的自适应解释器带来一到一点五倍免费提速，3.13 的 JIT 确认官方跟进编译路线但尚在早期。理解慢的原因才能选对优化层次。"
+    points: ["解释执行、一切皆对象、GIL 三重慢因", "比 JS 慢主要因无 JIT（V8 有）", "3.11 自适应解释器免费提速 1.2~1.5 倍", "优化思路：Python 调度，C 计算"]
+  - title: "Python 性能优化的层次与 profile 先行"
+    content: "优化层次从工程到极端分五层：算法与数据结构，O(n²) 改成 O(nlogn) 的收益大于一切微优化；用对库，NumPy 向量化把循环下沉到 C，pandas、polars 同理；解释器层，PyPy JIT 长跑任务提速四到十倍，3.11+ 自适应解释器免费提速；编译层，Cython、Numba、mypyc 把热点函数静态化；并行层，多进程、joblib、分布式。铁律是 profile 先行：用 cProfile 或 py-spy 定位热点再优化，没有测量就没有优化。"
+    points: ["算法收益大于一切微优化", "NumPy 向量化：Python 写调度，C 干计算", "PyPy JIT 长跑任务提速 4~10 倍", "cProfile 与 py-spy 定位热点，测量先行", "join 拼接、生成器、slots 三个小招"]
+  - title: "free-threading：3.13 的无 GIL 实验与现状"
+    content: "free-threading 是 PEP 703 的实验性无 GIL 构建，全局锁改为每对象细粒度锁加偏置优化，引用计数改为分片加即时衰减，多线程可真并行。代价：C 扩展需重编译并标注 thread-safe；单线程性能下降约百分之五到四十，目标仍在收敛；NumPy 2.1 以上等部分库已发布支持版，生态整体仍在迁移。现状是官方标记 experimental，可测试验证但不建议生产，与 3.12 的 per-interpreter GIL 并列为去 GIL 的两条路线。"
+    points: ["PEP 703：全局锁改细粒度锁加分片引用计数", "单线程有 5%~40% 损耗，生态迁移中", "官方标记 experimental，不建议生产", "与 per-interpreter GIL 并列两条路线"]
+  - title: "可变默认参数陷阱与正确的哨兵写法"
+    content: "默认参数在函数定义时求值一次并绑定到函数对象，而非每次调用时求值——默认值是可变对象（list、dict、set）时，所有调用共享同一对象，跨调用累积状态。典型 bug 是 def add(x, items=[])，多次调用后 items 保留上次的数据。正确写法是 None 哨兵：def add(x, items=None)，函数体内判断 items is None 就新建空列表。根源是 def 执行时创建函数对象并对默认值表达式求值一次，默认值存于 __defaults__。"
+    points: ["默认值在 def 时求值一次，存于 __defaults__", "可变默认值跨调用共享，累积状态", "None 哨兵加函数体内新建是标准解法", "类属性可变对象同理共享"]
+  - title: "闭包与装饰器的实现机制"
+    content: "闭包是内层函数引用外层函数的局部变量并被返回时形成的绑定，外层变量存在内层函数的 __closure__（cell 对象）中，外层函数返回后变量依然存活。装饰器本质是高阶函数：接收函数返回新函数，@语法等价于 func = decorator(func)。常见坑是循环闭包的 late binding：闭包捕获变量引用而非值，多个闭包共享同一变量导致全是最后一个值，用默认参数固化解。functools.wraps 保留被装饰函数的元信息，否则调试与文档工具失效。"
+    points: ["闭包变量存于 cell，外层返回后仍存活", "装饰器是高阶函数，@ 即 func = deco(func)", "循环闭包 late binding，用默认参数固化", "functools.wraps 保留元信息"]
+  - title: "赋值、浅拷贝与深拷贝的区别"
+    content: "Python 赋值是引用传递：b = a 只是把 b 指向 a 的同一对象，两者 id 相同，改一个另一个跟着变。浅拷贝 copy.copy、切片只复制最外层容器，内层嵌套对象仍是共享引用，改内层会互相影响。深拷贝 copy.deepcopy 递归复制所有层级，完全独立，但有性能开销，且用 memo 记忆化处理循环引用，遇环不无限递归。选择原则：不可变对象直接赋值；单层结构浅拷贝够用；嵌套结构需要独立副本时才 deepcopy。变量是名字绑定而非盒子，这是理解变量语义的根基。"
+    points: ["赋值只绑定引用，id 相同", "浅拷贝只复制一层，内层共享引用", "deepcopy 递归复制且用 memo 处理循环引用", "变量是名字绑定，不是盒子"]
+  - title: "is 与 == 的区别及小整数缓存"
+    content: "is 比较对象身份——两个名字是否指向同一个对象（id 相等）；== 比较值相等——调用左侧对象的 __eq__ 方法，由类自定义相等逻辑。两个内容相同的独立列表 == 为 True 而 is 为 False。迷惑行为来自 CPython 的优化：小整数缓存（-5 到 256 复用）与字符串驻留让某些字面量 is 为 True，但这不可依赖，PEP 8 要求与 None 比较必须用 is。None 是单例，is 恒可靠；== 可能被 __eq__ 重载出意外。"
+    points: ["is 比身份（id），== 比值（__eq__）", "小整数缓存与字符串驻留是实现细节不可依赖", "与 None 比较必须用 is（PEP 8）", "默认 __eq__ 按身份比较"]
+  - title: "上下文管理器与 with 语句的机制"
+    content: "with 进入时调用 __enter__，退出时无论是否异常都调用 __exit__，保证资源确定性释放，替代 try/finally 样板。实现途径：类实现协议，或用 contextmanager 装饰生成器，yield 前后分别为进入与清理逻辑。__exit__ 返回 True 表示吞异常继续，否则向外传播——contextlib.suppress 就靠这个机制。典型场景：文件、锁、数据库连接、计时段落。asyncio 世界对应 async with，同步锁会阻塞事件循环。"
+    points: ["with 保证 __exit__ 必被调用，替代 try/finally", "contextmanager 装饰器用生成器简化实现", "__exit__ 返回 True 吞异常，否则向外传播", "异步世界用 async with，同步锁会阻塞循环"]
+  - title: "生成器与 yield：惰性求值与内存优势"
+    content: "含 yield 的函数调用后返回生成器对象而不执行函数体，每次 next 或 for 迭代推进到下一个 yield 处暂停并产出值，实现惰性求值。内存优势：处理大文件、大集合时逐条产出，流式处理十 GB 日志与处理百行代码内存占用相同。yield 还能接收 send 传值实现双向通信——这是 asyncio 协程机制的语言基础（await 借 yield from 挂起）。生成器只能遍历一次，耗尽后再 next 抛 StopIteration。"
+    points: ["yield 暂停并保留局部状态，惰性产出", "流式处理大文件，内存占用恒定", "生成器表达式不物化，列表推导一次建全量", "send 双向通信是协程的语言基础", "生成器一次性，耗尽后需重建"]

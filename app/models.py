@@ -73,3 +73,32 @@ class InterviewAnswer(Base):
 
     session: Mapped["InterviewSession"] = relationship(back_populates="answers")
     question: Mapped["Question"] = relationship()
+
+
+class StudyDoc(Base):
+    """八股文库：体系长文档（陈述式知识，沉浸阅读，与面试题库完全分离）"""
+
+    __tablename__ = "study_doc"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(Text)  # Markdown 长文
+    source: Mapped[str] = mapped_column(String(16), default="BUILTIN")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class StudyCard(Base):
+    """八股文库：背诵卡片（Anki 式陈述知识点 + 关键点，带背诵进度）"""
+
+    __tablename__ = "study_card"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(255))  # 知识点名（陈述式，非问句）
+    content: Mapped[str] = mapped_column(Text)  # 陈述式正文
+    points: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 关键点速记
+    # new 未学 / learning 待巩固 / mastered 已背熟
+    status: Mapped[str] = mapped_column(String(16), default="new")
+    source: Mapped[str] = mapped_column(String(16), default="BUILTIN")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

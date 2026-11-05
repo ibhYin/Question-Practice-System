@@ -1,0 +1,80 @@
+# Java 基础知识体系（陈述式背诵卡片）
+category: JAVA
+doc:
+  title: "Java 基础知识体系全景"
+  content: |
+    Java 基础知识体系沿"语言核心 → 泛型反射代理 → 集合框架 → 字符串 → IO 模型与平台演进"五条主线串成整体。
+
+    ## 一、语言核心：对象的语义与行为契约
+
+    对象相等语义是第一块基石：== 对基本类型比值、对引用类型比地址；equals 默认就是 ==，可重写为比较内容；hashCode 与 equals 之间存在硬性契约——equals 相等则 hashCode 必须相等，否则哈希容器行为异常。面向对象的另一组基石是接口与抽象类：抽象类表达 is-a，承载公共实现与状态做模板复用；接口表达 can-do，定义行为契约并支持多实现，框架里常见"接口定契约 + 抽象类给骨架"的组合。异常体系分 Error 与 Exception：受检异常对应可预期的外部故障，RuntimeException 对应编程 bug。
+
+    ## 二、泛型、反射与代理：框架的三大基石
+
+    泛型编译后擦除，运行时无类型信息，因此不能 new T()、不能对 T 做 instanceof，PECS 法则指导通配符使用。反射慢在元数据查找与安全检查，优化靠缓存 Method、setAccessible 与 MethodHandle。动态代理分两类：JDK 代理实现接口并转发 InvocationHandler，CGLIB 生成子类用 MethodInterceptor 拦截。SPI 机制通过 META-INF/services 清单做服务发现，JDBC 驱动加载依赖线程上下文类加载器打破双亲委派。
+
+    ## 三、集合框架：以 HashMap 为核心
+
+    HashMap 是集合主线的中枢：JDK8 采用数组+链表+红黑树，hash 扰动让高位参与寻址，(n-1)&hash 定位桶要求容量为 2 的幂；链表长度达 8 且数组长度达 64 树化，超过容量乘负载因子扩容翻倍，JDK8 用高低位拆链迁移并改尾插法避免并发成环。线程安全场景使用 ConcurrentHashMap：JDK8 用 CAS 加 synchronized 锁单桶替代 JDK7 的分段锁，扩容支持多线程协助迁移，读操作靠 volatile 无锁完成。
+
+    ## 四、字符串体系
+
+    String 不可变（final 字符数组）是常量池复用、hash 缓存、线程安全与防篡改四项能力的根基；常量池从永久代迁到堆，intern 在 JDK7 后直接存堆引用；单线程拼接用 StringBuilder，方法加锁的 StringBuffer 几乎不用。
+
+    ## 五、IO 模型与平台演进
+
+    BIO 一连接一线程不可扩展；NIO 以 Channel+Buffer+Selector 多路复用实现 Reactor 事件驱动，Netty 是工业封装；AIO 在 Linux 收益不明显已被边缘化。版本演进以 JDK8 为分水岭（Lambda、Stream、Optional），17 加入 Record 与 sealed，21 的虚拟线程用同步写法获得异步吞吐，新项目直接选 17/21 LTS。ThreadLocal 横跨语言与并发：数据挂在线程自身，线程池场景必须 finally remove 以防泄漏与串号。
+
+    五条主线连起来：语言核心定义对象语义，泛型反射代理支撑框架，集合解决数据组织，字符串贯穿其中，IO 与版本演进决定工程形态——这就是 Java 基础的全景。
+cards:
+  - title: "HashMap 的底层结构与 put 执行流程"
+    content: "JDK8 中 HashMap 采用数组+链表+红黑树结构：哈希冲突挂链表，链表长度达到 8 且数组长度达到 64 时转为红黑树（查询降为 O(logN)），节点减少到 6 时退化回链表。put 流程：先对 key 的 hashCode 做高 16 位异或扰动，让高位也参与寻址以减少冲突；再用 (n-1)&hash 定位桶；桶为空直接放入，首节点 key 相同则覆盖，是树节点走树插入，否则链表尾插；最后 size 超过容量乘负载因子（默认 16×0.75=12）触发扩容。"
+    points: ["数组+链表+红黑树，链表长度≥8 且数组长度≥64 才树化", "hash 扰动：高 16 位异或低位，让高位参与寻址", "(n-1)&hash 定位桶，JDK8 改尾插法避免并发成环", "默认容量 16、负载因子 0.75，超过 12 触发扩容"]
+  - title: "HashMap 的扩容机制与 2 的幂容量设计"
+    content: "扩容时新建两倍大小的数组。JDK8 无需重新计算每个元素的 hash：按新增的那个 bit 把链表拆成高低位两条链，元素新位置要么保持原下标、要么等于原下标加旧容量。容量必须是 2 的幂，因为 (n-1) 的二进制全为 1，位运算与 hash 相与等价于取模但更快，且散列均匀，扩容翻倍时元素只需判断一个 bit 就能确定新位置。JDK7 采用头插法，并发扩容可能使链表成环导致死循环，JDK8 改为尾插法解决，并加入红黑树防哈希碰撞攻击。"
+    points: ["扩容翻倍，链表按高低位拆分迁移，无需重算 hash", "2 的幂使 (n-1)&hash 等价于取模且散列均匀", "JDK7 头插法并发扩容会成环，JDK8 改尾插", "JDK8 加入红黑树防哈希碰撞攻击"]
+  - title: "ConcurrentHashMap 的线程安全实现与 JDK8 改进"
+    content: "JDK7 用分段锁，每段继承 ReentrantLock，并发度等于段数。JDK8 改为 CAS 加 synchronized 锁单桶：桶空时 CAS 插入，桶非空只锁头节点，并发度约等于数组长度；扩容支持多线程协助迁移，迁移完的桶标记 ForwardingNode。size 用 baseCount 加 CounterCell 分段计数；val 与 next 由 volatile 修饰，get 全程无锁。key 和 value 不允许 null，并发下无法区分不存在与值为 null。"
+    points: ["JDK7 分段锁 Segment，JDK8 CAS+synchronized 锁单桶", "扩容支持多线程协助迁移与 ForwardingNode 标记", "size 用 baseCount+CounterCell 分段计数", "读操作无锁，val/next 靠 volatile 保证可见性", "key/value 不允许 null，避免并发语义歧义"]
+  - title: "equals、== 与 hashCode 的契约关系"
+    content: "== 对基本类型比较值，对引用类型比较地址。equals 在 Object 中默认就是 ==，可重写为比较内容。哈希容器的契约是 equals 相等则 hashCode 必须相等：只重写 equals 不重写 hashCode，两个相等对象会被分到不同桶，导致 set.contains 返回 false、HashMap 出现重复 key。规范上 hashCode 相等不要求 equals 相等（允许冲突）；实践中用 IDE 生成或 Lombok 保证一致性。"
+    points: ["== 比值或比地址，equals 默认同 ==，可重写比内容", "契约：equals 相等则 hashCode 必须相等", "只重写 equals 会导致哈希容器行为异常", "hashCode 相等不要求 equals 相等（允许冲突）"]
+  - title: "String 的不可变设计与三个字符串类的对比"
+    content: "String 内部字符数组被 final 修饰且无修改方法，拼接产生新对象，因此不可变。不可变带来四点好处：常量池可复用相同字面量省内存；hash 缓存使作为 HashMap key 只算一次；对象天然线程安全可自由共享；类加载路径、数据库 URL 等敏感参数不被篡改。对比：StringBuilder 可变且非线程安全，单线程拼接首选；StringBuffer 方法加 synchronized，安全但慢。"
+    points: ["String 不可变：final 字符数组且无修改方法", "不可变支撑常量池复用、hash 缓存、线程安全、防篡改", "StringBuilder 可变非线程安全，单线程拼接首选", "StringBuffer 方法 synchronized，线程安全但慢"]
+  - title: "字符串常量池的位置与 intern 机制"
+    content: "字符串常量池的位置经历变迁：JDK6 位于永久代，JDK7 移到堆中可被 GC 回收，JDK8 废除永久代改用元空间后字符串池仍在堆。intern 返回池中等值的引用，JDK7 起池中不存在时直接把当前堆引用放入池（JDK6 是复制对象）。new String(“abc”) 涉及两个对象：编译期进入常量池的字面量与堆上 new 出的对象，池中已存在则只有 1 个。对大量重复字符串调用 intern 可节省内存，还可通过 StringTableSize 调桶数，或开启 G1 的字符串去重自动压缩。"
+    points: ["JDK6 永久代 → JDK7 移到堆 → JDK8 后仍在堆", "intern：JDK7 起池中没有则存入堆引用而非复制", "new String(“abc”) 最多产生池内+堆两个对象", "重复字符串 intern 省内存，G1 支持自动去重"]
+  - title: "接口与抽象类的语法差异与选择"
+    content: "接口的方法默认 public abstract，JDK8 后可有 default 与 static 方法，成员只能是常量，类可实现多个接口；抽象类可有任意成员、构造器与状态，但只能单继承。语义上抽象类表达 is-a，把公共实现与状态放父类做模板复用；接口表达 can-do，定义行为契约如 Comparable。需要共享代码和状态用抽象类；需要多继承效果、定义规范、面向解耦用接口。框架常组合两者：接口定契约、抽象类给骨架，如 List 与 AbstractList。"
+    points: ["接口：多实现，JDK8 后可有 default/static 方法", "抽象类：单继承，可含状态、构造器与公共实现", "抽象类是 is-a 模板复用，接口是 can-do 能力契约", "实践常用接口定契约+抽象类给骨架（List/AbstractList）"]
+  - title: "Java 异常体系的分层与使用规范"
+    content: "Throwable 分 Error 与 Exception：Error 是 OOM、StackOverflow 等严重错误，不应捕获。Exception 分受检与非受检：受检异常如 IOException 编译器强制处理，对应可预期外部故障；RuntimeException 子类是编程 bug，应修代码而非 catch 掩盖。规范：异常不做流程控制；catch 要么处理要么包装抛出；自定义业务异常继承 RuntimeException；finally 不 return 以免吞异常。"
+    points: ["Error 不应捕获；Exception 分受检与非受检", "受检异常编译器强制处理，对应可预期外部故障", "RuntimeException 是编程 bug，修代码而非 catch 掩盖", "finally 不 return；异常有栈轨迹开销，别当流程控制"]
+  - title: "深拷贝与浅拷贝的区别与实现方式"
+    content: "浅拷贝只复制对象本身，内部引用字段与原对象共享同一实例，改副本会影响原对象；实现有重写 clone（Object.clone 默认浅拷贝）、拷贝构造器与 BeanUtils.copyProperties。深拷贝递归复制引用字段，副本完全独立。实现方式：所有字段层层手动 clone，繁琐易漏；序列化反序列化最通用但性能较差；拷贝构造器逐字段 new 清晰可控，推荐使用。String、Integer 等不可变字段无需深拷贝；业务中更多用重新 build 对象代替 clone。"
+    points: ["浅拷贝共享引用字段，深拷贝递归复制完全独立", "序列化反序列化是通用深拷贝手段但性能较差", "拷贝构造器逐字段复制清晰可控", "String 等不可变字段无需深拷贝"]
+  - title: "泛型擦除的限制与 PECS 法则"
+    content: "Java 泛型编译后擦除：List<String> 与 List<Integer> 运行时同为 List，类型参数替换为上界或 Object。限制：不能 new T()、不能对 T 做 instanceof。PECS 法则：List<? extends Number> 是生产者只读；List<? super Integer> 是消费者可写 Integer、读出为 Object。绕过擦除可用 TypeToken 把泛型写进匿名子类签名，供 JSON 反序列化读取。"
+    points: ["泛型编译期擦除，运行时无类型参数信息", "限制：不能 new T、instanceof T、静态成员用类泛型", "PECS：extends 只读生产者，super 可写消费者", "TypeToken/Class<T> 借签名属性绕过擦除"]
+  - title: "反射的性能瓶颈与优化手段"
+    content: "反射慢在四点：getMethod 遍历元数据查找、每次调用的安全检查、参数装箱与 Object[] 开销、JIT 难以内联。Method 内部有 inflation 机制：前 15 次 native 实现，之后生成字节码版调用器，这是反射越用越快的来源。优化：缓存 Method/Field 收益最大；setAccessible(true) 跳过权限检查；热点路径换 MethodHandle 或 LambdaMetafactory，可被 JIT 内联接近原生。"
+    points: ["慢因：元数据查找、安全检查、装箱开销、难内联", "inflation：15 次 native 后生成字节码版调用器", "缓存 Method/Field 收益最大", "热点换 MethodHandle/LambdaMetafactory 接近原生", "JDK17+ 强封装需 --add-opens 放行深反射"]
+  - title: "JDK 动态代理与 CGLIB 的原理与选择"
+    content: "JDK 动态代理运行时生成实现目标接口的 $Proxy 类，调用统一转发给 InvocationHandler.invoke。CGLIB 用 ASM 生成目标类子类，经 MethodInterceptor 拦截方法，FastClass 用索引代替反射提速，但无法代理 final 类与 final、private 方法。Spring 中有接口默认 JDK 代理，proxyTargetClass=true 强制 CGLIB，Spring Boot 2.x 起默认 CGLIB。"
+    points: ["JDK 代理实现接口+InvocationHandler，必须有接口", "CGLIB 生成子类+MethodInterceptor，final 不可代理", "Spring Boot 2.x 默认 CGLIB 统一代理方式", "JDK 生成快、CGLIB 调用快，现代版本差距可忽略"]
+  - title: "SPI 机制与 JDBC 驱动的加载原理"
+    content: "SPI 是 JDK 内置的服务发现：在 META-INF/services 写实现类全名清单，ServiceLoader.load 读取后反射实例化全部实现。JDBC 驱动 jar 声明 java.sql.Driver 实现，DriverManager 初始化时扫描加载。Driver 接口由启动类加载器加载，实现却在 classpath，父加载器无法加载子路径类，于是用线程上下文类加载器反向委托，是对双亲委派的合法破坏。同思想演进：Spring Boot 自动配置与 Dubbo SPI。"
+    points: ["META-INF/services 清单 + ServiceLoader 反射实例化", "JDBC 驱动靠 DriverManager 扫描 SPI 加载", "TCCL 线程上下文加载器打破双亲委派加载实现类", "Spring Boot 自动配置、Dubbo SPI 是同思想演进"]
+  - title: "BIO、NIO、AIO 三种 IO 模型的区别"
+    content: "BIO 同步阻塞，一连接一线程，高连接数下线程爆炸，只适合连接少任务短。NIO 同步非阻塞，基于 Channel、Buffer、Selector 多路复用，单线程监听海量连接的就绪事件再处理，是事件驱动 Reactor 模式；Netty 是其工业封装。AIO 发起后回调通知（Proactor），但 Linux 底层仍是 epoll 模拟、收益不明显，Netty 已移除支持。选型：高并发长连接用 NIO/Netty；文件快速传输用零拷贝 transferTo（sendfile）。"
+    points: ["BIO 一连接一线程，高并发下线程爆炸", "NIO：Channel+Buffer+Selector 多路复用，Reactor 事件驱动", "AIO 在 Linux 是 epoll 模拟，Netty 已移除", "高并发长连接选 Netty；文件传输用零拷贝 sendfile"]
+  - title: "JDK8 之后的语言与平台演进主线"
+    content: "JDK8 是分水岭：Lambda、Stream 声明式集合处理、Optional、接口 default 方法、新日期 API。JDK9-11 引入模块化、var、新 HttpClient。JDK14-17 提供 Record 不可变数据载体、sealed 密封类、switch 表达式，ZGC 生产可用。JDK21 LTS 带来虚拟线程，同步写法获得异步吞吐。实践上新项目直接选 17/21，升级收益是 G1/ZGC 性能与表达力，阻力在 javax→jakarta 与强封装。"
+    points: ["JDK8：Lambda、Stream、Optional、新日期 API", "JDK17：Record、sealed、switch 表达式、ZGC 生产可用", "JDK21 LTS：虚拟线程同步写法获得异步吞吐", "新项目选 17/21，阻力在 javax→jakarta 与强封装"]
+  - title: "ThreadLocal 的原理与内存泄漏机制"
+    content: "每个 Thread 内有一个 ThreadLocalMap，key 是 ThreadLocal 的弱引用，value 是强引用，数据挂在线程自身，天然隔离。GC 后 key 变 null，value 仍被强引用链持有，线程池线程长生不死即泄漏，必须 finally 中 remove。串号更危险：上个任务的上下文会带给下个任务。池内传递用 TransmittableThreadLocal（TTL），InheritableThreadLocal 只在新建子线程时复制。"
+    points: ["ThreadLocalMap 挂在 Thread 上，key 弱引用 value 强引用", "线程池线程不死导致 value 无法回收即泄漏", "用完必须 finally remove，防泄漏更防串号", "线程池传递上下文用 TTL，Inheritable 不触发池化继承"]
+  - title: "Happens-Before 规则与可见性契约"
+    content: "JMM 定义操作间的可见性顺序契约：若 A happens-before B，A 的结果对 B 可见且禁止重排破坏该顺序，程序员按规则推理、JVM 保证实现。核心规则：单线程程序顺序（as-if-serial）、监视器锁解锁先行于后续加锁、volatile 写先行于后续读、start 前操作对新线程可见、join 后子线程操作对主线程可见、传递性及 final 构造规则。它解释了 DCL 为何需要 volatile（赋值与初始化重排违反规则），也说明无同步的两线程间没有任何顺序保证，即数据竞争。"
+    points: ["A hb B 则 A 的结果对 B 可见且禁止重排破坏", "核心规则：程序顺序、锁、volatile、start/join、传递性", "用 hb 规则可证明 DCL 必须加 volatile", "无同步的两线程间无顺序保证即数据竞争"]

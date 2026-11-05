@@ -218,6 +218,26 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
 .rel-item .t { flex: 1; }
 .answer-full { font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
 
+/* ===== 八股文库 ===== */
+.study-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; padding: 14px 18px; }
+.study-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+.study-toc { padding: 14px; }
+.toc-item {
+  padding: 10px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  color: var(--ink2); margin-bottom: 4px;
+}
+.toc-item:hover { background: #f0f2fa; color: var(--ink); }
+.toc-item.on { background: #eef0ff; color: var(--brand); font-weight: 600; }
+.study-content { min-height: 300px; }
+.doc-body { font-size: 15px; line-height: 1.85; white-space: pre-wrap; }
+.flip-card {
+  min-height: 240px; cursor: pointer; display: flex; flex-direction: column;
+  justify-content: center; transition: box-shadow .2s;
+}
+.flip-card:hover { box-shadow: 0 4px 20px rgba(79, 93, 240, .12); }
+.flip-front { font-size: 22px; font-weight: 700; text-align: center; line-height: 1.6; padding: 20px; }
+.flip-back { font-size: 15px; line-height: 1.85; white-space: pre-wrap; padding: 6px 10px; }
+
 @media (max-width: 860px) {
   .home-grid, .compare, .grid2 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }

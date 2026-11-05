@@ -9,7 +9,7 @@ from .backup import maybe_backup
 from .database import Base, engine
 from .errors import BizError
 from .llm import is_enabled
-from .routers import interview, questions, review, settings, stats
+from .routers import interview, questions, review, settings, stats, study
 from .redis_client import rdb
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -37,6 +37,7 @@ app.include_router(questions.router)
 app.include_router(review.router)
 app.include_router(stats.router)
 app.include_router(settings.router)
+app.include_router(study.router)
 
 
 @app.get("/api/health")
