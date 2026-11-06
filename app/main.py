@@ -41,6 +41,17 @@ app.include_router(study.router)
 app.include_router(analysis.router)
 
 
+@app.middleware("http")
+async def no_cache_static(request: Request, call_next):
+    """开发场景静态资源禁用强缓存：no-cache = 每次向服务器验证（ETag 304 依然高效），
+    避免浏览器用旧版 app.js 导致页面空白/功能缺失。"""
+    response = await call_next(request)
+    path = request.url.path
+    if path in ("/", "/index.html") or path.startswith(("/app.js", "/style.css")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/api/health")
 def health():
     status = {"mysql": "ok", "redis": "ok", "llm": "on" if is_enabled() else "off"}
