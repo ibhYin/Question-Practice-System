@@ -7,7 +7,7 @@ from .. import review as review_svc
 from ..backup import maybe_backup
 from ..database import get_db
 from ..errors import BizError
-from ..models import InterviewAnswer, Question
+from ..models import InterviewAnswer, Question, StudyCard
 from ..question_bank import CATEGORIES, CATEGORY_NAMES, invalidate_category_cache
 from ..redis_client import rdb
 from ..schemas import QuestionCreate, QuestionOut, QuestionUpdate
@@ -143,6 +143,34 @@ def knowledge_map(category: str = "", db: DBSession = Depends(get_db)):
             if rid in idset and rid > q.id:  # 去重：只输出一次边
                 links.append({"source": q.id, "target": rid})
     return {"nodes": nodes, "links": links, "categories": sorted({q.category for q in questions})}
+
+
+@router.get("/{qid}/cards")
+def question_cards(qid: int, db: DBSession = Depends(get_db)):
+    """该题关联的八股知识点卡（答题结果页展示"背哪几张卡能答好这类题"）"""
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    card_ids = q.card_ids or []
+    cards = []
+    if card_ids:
+        rows = db.query(StudyCard).filter(StudyCard.id.in_(card_ids)).all()
+        by_id = {c.id: c for c in rows}
+        # 按 card_ids 顺序输出（建链时按相关度排序）
+        for cid in card_ids:
+            c = by_id.get(cid)
+            if c:
+                cards.append(
+                    {
+                        "id": c.id,
+                        "title": c.title,
+                        "content": c.content,
+                        "points": c.points or [],
+                        "status": c.status,
+                        "category_name": CATEGORY_NAMES.get(c.category, c.category),
+                    }
+                )
+    return {"question_id": qid, "title": q.title, "cards": cards}
 
 
 @router.get("/knowledge/{qid}")

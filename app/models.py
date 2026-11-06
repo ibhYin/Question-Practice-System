@@ -22,6 +22,7 @@ class Question(Base):
     source: Mapped[str] = mapped_column(String(16), default="MANUAL")
     model_answer: Mapped[str] = mapped_column(Text, default="")  # 满分答案
     related_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 知识关联题 id（知识地图边）
+    card_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 关联八股卡 id（答题时给出知识点）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, onupdate=datetime.now
@@ -101,4 +102,22 @@ class StudyCard(Base):
     # new 未学 / learning 待巩固 / mastered 已背熟
     status: Mapped[str] = mapped_column(String(16), default="new")
     source: Mapped[str] = mapped_column(String(16), default="BUILTIN")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class KnowledgePack(Base):
+    """知识点知识包：LLM 按需生成的系统级知识文档（完整原理/边界/变体问法/识别信号）。
+
+    每个知识点一份、懒生成、永久复用——八股卡是速记锚点，知识包才是全面的知识来源。
+    """
+
+    __tablename__ = "knowledge_pack"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tag: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # 知识点名
+    category: Mapped[str] = mapped_column(String(32))
+    content: Mapped[str] = mapped_column(Text)  # Markdown 系统知识长文
+    related_card_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 推荐速记卡
+    related_question_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 典型考题
+    source: Mapped[str] = mapped_column(String(16), default="AI")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

@@ -217,6 +217,9 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
 }
 .rel-item .t { flex: 1; }
 .answer-full { font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+.pack-box {
+  background: #f6f8ff; border: 1px solid #dfe4ff; border-radius: 10px; padding: 14px 16px;
+}
 
 /* ===== 八股文库 ===== */
 .study-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; padding: 14px 18px; }

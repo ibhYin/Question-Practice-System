@@ -70,7 +70,9 @@ const InterviewView = {
       pollTimer: null,       // 异步评分轮询
       pollTries: 0,
       knowledge: [],         // 本题关联考点（知识链路）
-      relatedDetail: null,   // 点击关联考点弹出的详情
+      relatedCards: [],      // 本题关联八股卡（知识点速记）
+      cardDetail: null,      // 点开的八股卡
+      packState: {},         // cardId -> {loading, content} 知识包懒生成
     });
 
     function startTimer() {
@@ -139,17 +141,43 @@ const InterviewView = {
       state.loading = false;
     }
 
-    /* 知识链路：结果页加载本题关联考点 */
+    /* 知识链路 + 相关八股：结果页加载本题的延伸材料 */
     async function loadKnowledge(qid) {
       state.knowledge = [];
+      state.relatedCards = [];
       try {
         const k = await api(`/questions/knowledge/${qid}`);
         state.knowledge = k.related;
       } catch (e) { /* 关联加载失败不干扰答题 */ }
+      try {
+        const c = await api(`/questions/${qid}/cards`);
+        state.relatedCards = c.cards;
+      } catch (e) { /* 忽略 */ }
     }
     function openRelated(k) {
       state.relatedDetail = k;   // k 含 title/category_name/model_answer
     }
+    function openCard(c) {
+      state.cardDetail = { ...c };
+    }
+    async function markCard(cardId, status) {
+      try {
+        await api(`/study/cards/${cardId}/status`, { method: 'POST', body: { status } });
+        if (state.cardDetail && state.cardDetail.id === cardId) state.cardDetail.status = status;
+        state.relatedCards = state.relatedCards.map(c => c.id === cardId ? { ...c, status } : c);
+        loadOverviewForCards();
+      } catch (e) { state.error = e.message; }
+    }
+    async function loadPackForCard(card) {
+      state.packState = { ...state.packState, [card.id]: { loading: true, content: null } };
+      try {
+        const p = await api('/analysis/knowledge-pack', { method: 'POST', body: { tag: card.title } });
+        state.packState = { ...state.packState, [card.id]: { loading: false, content: p.content } };
+      } catch (e) {
+        state.packState = { ...state.packState, [card.id]: { loading: false, content: null, error: e.message } };
+      }
+    }
+    function loadOverviewForCards() { /* 占位：标记变化会由八股文库页激活时刷新 */ }
 
     async function submit(skip = false) {
       state.submitting = true; state.error = '';
@@ -206,7 +234,7 @@ const InterviewView = {
     onMounted(loadProgress);
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, openCard, markCard, loadPackForCard, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -273,6 +301,11 @@ const InterviewView = {
           <span class="hint" style="flex-shrink:0; align-self:center">🔗 关联考点</span>
           <span v-for="k in state.knowledge" :key="k.id" class="chip small" @click="openRelated(k)">{{ k.category_name }} · {{ k.title }}</span>
         </div>
+        <div v-if="state.relatedCards && state.relatedCards.length" class="know-strip">
+          <span class="hint" style="flex-shrink:0; align-self:center">📚 相关八股</span>
+          <span v-for="c in state.relatedCards" :key="c.id" class="chip small" @click="openCard(c)">
+            {{ CARD_STATUS_META[c.status].label }} · {{ c.title }}</span>
+        </div>
         <div class="answer-actions">
           <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
           <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
@@ -329,6 +362,36 @@ const InterviewView = {
         </div>
       </div>
     </div>
+
+    <!-- 相关八股卡弹窗：正文 + 关键点 + 背诵标记 + 知识包 -->
+    <div v-if="state.cardDetail" class="modal-mask" @click.self="state.cardDetail = null">
+      <div class="modal">
+        <h3>{{ state.cardDetail.title }}</h3>
+        <div class="q-meta" style="margin-bottom:12px">
+          <span class="badge">{{ state.cardDetail.category_name }}</span>
+          <span class="badge" :class="CARD_STATUS_META[state.cardDetail.status].cls">{{ CARD_STATUS_META[state.cardDetail.status].label }}</span>
+        </div>
+        <div class="box you" style="max-height:none; margin-bottom:12px">{{ state.cardDetail.content }}</div>
+        <div v-if="state.cardDetail.points && state.cardDetail.points.length" class="know-strip" style="border:none; padding:0; margin-bottom:14px">
+          <span class="hint" style="flex-shrink:0; align-self:center">⚡ 关键点</span>
+          <span v-for="(p, i) in state.cardDetail.points" :key="i" class="badge gray">{{ p }}</span>
+        </div>
+        <div class="know-strip" style="border:none; padding:0; margin-bottom:14px">
+          <button class="btn small danger" :disabled="state.cardDetail.status === 'new'" @click="markCard(state.cardDetail.id, 'new')">未掌握</button>
+          <button class="btn small" :disabled="state.cardDetail.status === 'learning'" @click="markCard(state.cardDetail.id, 'learning')">待巩固</button>
+          <button class="btn small primary" :disabled="state.cardDetail.status === 'mastered'" @click="markCard(state.cardDetail.id, 'mastered')">✓ 已背熟</button>
+          <button class="btn small ghost" :disabled="(state.packState[state.cardDetail.id] && (state.packState[state.cardDetail.id].loading || state.packState[state.cardDetail.id].content))" @click="loadPackForCard(state.cardDetail)">
+            {{ state.packState[state.cardDetail.id] ? (state.packState[state.cardDetail.id].loading ? '知识包生成中…（1-2分钟）' : (state.packState[state.cardDetail.id].content ? '✓ 知识包已展开' : '重试生成知识包')) : '📖 生成系统知识包（更全面）' }}</button>
+        </div>
+        <div v-if="state.packState[state.cardDetail.id] && state.packState[state.cardDetail.id].content" class="pack-box">
+          <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">📖 系统知识包（完整原理 · 变体问法 · 识别信号）</h4>
+          <div class="doc-body" style="max-height:320px; overflow:auto" v-html="renderAnswer(state.packState[state.cardDetail.id].content)"></div>
+        </div>
+        <div class="answer-actions">
+          <button class="btn" @click="state.cardDetail = null">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
   `,
 };
@@ -336,11 +399,15 @@ const InterviewView = {
 /* ---------- 知识地图 ---------- */
 const MapView = {
   name: 'MapView',
-  setup() {
+  emits: ['start-session'],
+  setup(_, { emit }) {
     const state = reactive({
       loading: true, error: '', category: 'MYSQL',
+      mode: 'tag',            // tag 知识点视角 | question 题目视角
       stats: { nodes: 0, links: 0, linked: 0 },
-      detail: null,   // 点节点弹出的题目+满分答案+关联
+      detail: null,           // 题目模式：点节点弹题详情
+      panel: null,            // 知识点模式：点节点弹行动面板
+      diagnosing: false, packLoading: false, variantStarting: false,
     });
     let chartInst = null;
     const chartEl = ref(null);
@@ -350,14 +417,19 @@ const MapView = {
       SPRING: '#16a34a', NETWORK: '#2563eb', SCENARIO: '#9333ea', AI_APP: '#db2777', AGENT: '#ea580c',
       FULLSTACK: '#0d9488', OS: '#475569', DISTRIBUTED: '#a16207', ALGO: '#be185d', PYTHON: '#ca8a04',
     };
+    const STATUS_COLOR = { weak: '#dc2626', encountered: '#2563eb', untouched: '#94a3b8' };
 
     async function load() {
       state.loading = true; state.error = '';
+      state.detail = null; state.panel = null;
       try {
-        const d = await api(`/questions/knowledge/map?category=${state.category}`);
+        const d = state.mode === 'tag'
+          ? await api(`/analysis/knowledge-graph?category=${state.category}`)
+          : await api(`/questions/knowledge/map?category=${state.category}`);
+        const flat = d.links.map(l => ({ source: l.source, target: l.target }));
         state.stats = {
           nodes: d.nodes.length, links: d.links.length,
-          linked: new Set([...d.links.flatMap(l => [l.source, l.target])]).size,
+          linked: new Set(flat.flatMap(l => [l.source, l.target])).size,
         };
         state.loading = false;
         nextTick(() => render(d));
@@ -369,68 +441,125 @@ const MapView = {
       chartInst = chartInst || echarts.init(chartEl.value);
       const degree = {};
       d.links.forEach(l => { degree[l.source] = (degree[l.source] || 0) + 1; degree[l.target] = (degree[l.target] || 0) + 1; });
+      const isTag = state.mode === 'tag';
+      const nodes = d.nodes.map(n => {
+        let color, size, tip;
+        if (isTag) {
+          color = STATUS_COLOR[n.status] || '#94a3b8';
+          size = 16 + (n.attempts || 0) * 4 + Math.min(n.question_count || 0, 8) * 1.5;
+          const scoreTxt = n.avg_score != null ? `均分 ${n.avg_score}` : '未作答';
+          tip = `${n.name}<br/>状态：${{ weak: '🔴 薄弱', encountered: '🔵 答过', untouched: '⚪ 未触达' }[n.status]}<br/>${scoreTxt} · 出现于 ${n.question_count} 题`;
+        } else {
+          const wrong = n.wrong_count || 0;
+          color = wrong > 0 ? '#dc2626' : (CAT_COLORS[n.category] || '#64748b');
+          size = 14 + Math.min(wrong, 5) * 5 + Math.min(degree[n.id] || 0, 6) * 1.5;
+          tip = `${n.category}<br/>${n.name}<br/>答错 ${wrong} 次`;
+        }
+        return { id: String(n.id), name: n.name, fullName: n.name, value: n.id, category: n.category, categoryName: n.category, wrong_count: n.wrong_count || 0, status: n.status, attempts: n.attempts, avg_score: n.avg_score, itemStyle: { color }, symbolSize: size, tooltipText: tip };
+      });
       chartInst.setOption({
-        tooltip: {
-          formatter: (p) => p.dataType === 'node'
-            ? `${p.data.categoryName}<br/>${p.data.fullName}<br/>答错 ${p.data.wrong_count} 次`
-            : '',
-        },
+        tooltip: { formatter: (p) => p.dataType === 'node' ? (p.data.tooltipText || '') : '' },
         series: [{
           type: 'graph', layout: 'force', roam: true, draggable: true,
-          force: { repulsion: 130, edgeLength: 60, gravity: 0.08 },
-          label: { show: true, fontSize: 10, color: '#5b6478', formatter: (p) => p.data.name },
+          force: { repulsion: isTag ? 110 : 130, edgeLength: 55, gravity: 0.1 },
+          label: { show: true, fontSize: isTag ? 11 : 10, color: '#5b6478' },
           itemStyle: { borderColor: '#fff', borderWidth: 1 },
-          lineStyle: { color: '#c3cad9', width: 1, curveness: 0.1 },
+          lineStyle: { color: '#c3cad9', width: 1, curveness: 0.1, opacity: 0.6 },
           emphasis: { focus: 'adjacency', lineStyle: { width: 2.5, color: '#4f5df0' } },
-          data: d.nodes.map(n => ({
-            id: String(n.id), name: n.name, fullName: d.nodes.find(x => x.id === n.id) && n.name,
-            value: n.id, category: n.category, categoryName: n.category, wrong_count: n.wrong_count,
-            itemStyle: {
-              color: n.wrong_count > 0 ? '#dc2626' : (CAT_COLORS[n.category] || '#64748b'),
-            },
-            symbolSize: 14 + Math.min(n.wrong_count, 5) * 5 + Math.min(degree[n.id] || 0, 6) * 1.5,
-          })),
+          data: nodes,
           links: d.links.map(l => ({ source: String(l.source), target: String(l.target) })),
         }],
       }, true);
       chartInst.off('click');
       chartInst.on('click', async (p) => {
         if (p.dataType !== 'node') return;
-        try {
-          const k = await api(`/questions/knowledge/${p.data.value}`);
-          const node = d.nodes.find(n => n.id === p.data.value);
-          state.detail = {
-            id: p.data.value, title: node ? node.name : p.data.name,
-            category: node ? node.category : '', wrong_count: node ? node.wrong_count : 0,
-            related: k.related, category_name: k.category_name,
-          };
-        } catch (e) { state.error = e.message; }
+        if (state.mode === 'tag') {
+          state.panel = { tag: p.data.fullName, loading: true };
+          try {
+            const detail = await api(`/analysis/tags/${encodeURIComponent(p.data.fullName)}/detail`);
+            state.panel = { ...detail, loading: false };
+          } catch (e) { state.panel = { tag: p.data.fullName, loading: false, error: e.message }; }
+        } else {
+          try {
+            const k = await api(`/questions/knowledge/${p.data.value}`);
+            const node = d.nodes.find(n => n.id === p.data.value);
+            state.detail = {
+              id: p.data.value, title: node ? node.name : p.data.name,
+              category: node ? node.category : '', wrong_count: node ? node.wrong_count : 0,
+              related: k.related, category_name: k.category_name,
+            };
+          } catch (e) { state.error = e.message; }
+        }
       });
     }
 
-    function pick(c) { state.category = c; load(); }
+    /* 知识点行动面板的动作 */
+    async function runDiagnose() {
+      if (!state.panel) return;
+      state.diagnosing = true;
+      try {
+        const d = await api('/analysis/diagnose', { method: 'POST', body: { tag: state.panel.tag } });
+        state.panel = { ...state.panel, diagnosis: d };
+      } catch (e) { state.error = e.message; }
+      state.diagnosing = false;
+    }
+    async function loadPack() {
+      if (!state.panel) return;
+      state.packLoading = true;
+      try {
+        const p = await api('/analysis/knowledge-pack', { method: 'POST', body: { tag: state.panel.tag } });
+        state.panel = { ...state.panel, knowledge_pack: { content: p.content }, variant_questions: p.variant_questions || [] };
+      } catch (e) { state.error = e.message; }
+      state.packLoading = false;
+    }
+    async function startVariants() {
+      if (!state.panel) return;
+      state.variantStarting = true;
+      try {
+        const r = await api('/analysis/variant-session', { method: 'POST', body: { tag: state.panel.tag, count: 4 } });
+        state.panel = null;
+        emit('start-session', r.session_id);
+      } catch (e) { state.error = e.message; }
+      state.variantStarting = false;
+    }
+    async function markCard(cardId, status) {
+      try {
+        await api(`/study/cards/${cardId}/status`, { method: 'POST', body: { status } });
+        if (state.panel) {
+          state.panel = { ...state.panel, cards: state.panel.cards.map(c => c.id === cardId ? { ...c, status } : c) };
+        }
+      } catch (e) { state.error = e.message; }
+    }
     function closeDetail() { state.detail = null; }
+    function closePanel() { state.panel = null; }
+    function setMode(m) { state.mode = m; load(); }
+    function pick(c) { state.category = c; load(); }
     onMounted(load);
-    onActivated(() => { if (!state.loading) load(); });
+    onActivated(load);
     onUnmounted(() => { if (chartInst) { chartInst.dispose(); chartInst = null; } });
-    return { state, chartEl, pick, closeDetail, renderAnswer, CATEGORY_NAMES };
+    return { state, chartEl, pick, closeDetail, closePanel, setMode, runDiagnose, loadPack, startVariants, markCard, renderAnswer, CARD_STATUS_META, CATEGORY_NAMES };
   },
   template: `
   <div>
     <div class="card" style="padding:14px 18px; margin-bottom:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">
       <b style="font-size:14px">知识地图</b>
+      <div class="chips" style="gap:6px">
+        <button class="chip" :class="{on: state.mode === 'tag'}" @click="setMode('tag')">🧠 知识点视角</button>
+        <button class="chip" :class="{on: state.mode === 'question'}" @click="setMode('question')">📋 题目视角</button>
+      </div>
       <select v-model="state.category" class="input" style="width:auto; min-width:130px" @change="pick(state.category)">
         <option v-for="(name, code) in CATEGORY_NAMES" :key="code" :value="code">{{ name }}</option>
       </select>
-      <span class="hint">{{ state.stats.nodes }} 个考点 · {{ state.stats.links }} 条关联 · {{ state.stats.linked }} 题入网</span>
-      <span class="hint" style="margin-left:auto">🔴 红点 = 答错过的薄弱点 · 点大小 = 错题次数 + 关联度</span>
+      <span class="hint">{{ state.stats.nodes }} 个{{ state.mode === 'tag' ? '知识点' : '考点' }} · {{ state.stats.links }} 条关联</span>
+      <span v-if="state.mode === 'tag'" class="hint" style="margin-left:auto">🔴 薄弱 · 🔵 答过 · ⚪ 未触达 · 点节点进入行动面板</span>
+      <span v-else class="hint" style="margin-left:auto">🔴 红点 = 答错过的题</span>
     </div>
     <div class="card" style="padding:0; height:600px; position:relative">
       <div v-if="state.loading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center">加载中…</div>
       <div v-show="!state.loading" ref="chartEl" style="width:100%; height:100%"></div>
     </div>
 
-    <!-- 节点详情：题目 + 满分答案 + 关联链路 -->
+    <!-- 题目模式：题详情弹窗 -->
     <div v-if="state.detail" class="modal-mask" @click.self="closeDetail">
       <div class="modal">
         <h3>{{ state.detail.title }}</h3>
@@ -447,21 +576,98 @@ const MapView = {
             </div>
           </div>
         </div>
-        <div class="answer-full" v-html="renderAnswer(state.detail.related.find(r => r.id === state.detail.id)?.model_answer || '')"></div>
-        <div class="answer-actions">
-          <button class="btn" @click="closeDetail">关闭</button>
-        </div>
+        <div class="answer-full" v-html="renderAnswer('')"></div>
+        <div class="answer-actions"><button class="btn" @click="closeDetail">关闭</button></div>
+      </div>
+    </div>
+
+    <!-- 知识点模式：行动面板 -->
+    <div v-if="state.panel" class="modal-mask" @click.self="closePanel">
+      <div class="modal">
+        <template v-if="state.panel.loading">
+          <h3>{{ state.panel.tag }}</h3><p class="hint">加载中…</p>
+        </template>
+        <template v-else>
+          <h3>🧠 {{ state.panel.tag }}</h3>
+          <div class="q-meta" style="margin-bottom:14px">
+            <span class="badge" :class="{bad: state.panel.weak, ok: !state.panel.weak && state.panel.attempts, gray: !state.panel.attempts}">
+              {{ state.panel.weak ? '🔴 薄弱知识点' : state.panel.attempts ? '🔵 已接触' : '⚪ 未触达' }}</span>
+            <span v-if="state.panel.avg_score != null" class="badge gray">均分 {{ state.panel.avg_score }}</span>
+            <span class="badge gray">作答 {{ state.panel.attempts }} 次</span>
+          </div>
+
+          <!-- 行动区 -->
+          <div class="know-strip" style="border:none; padding:0; margin-bottom:14px">
+            <button class="btn primary" :disabled="state.variantStarting" @click="startVariants">
+              {{ state.variantStarting ? '生成变体题中…' : '🔀 变体训练（换个问法也认识）' }}</button>
+            <button class="btn" :disabled="state.packLoading || state.panel.knowledge_pack" @click="loadPack">
+              {{ state.packLoading ? '知识包生成中…（约 1-2 分钟）' : state.panel.knowledge_pack ? '✓ 知识包已生成' : '📖 生成系统知识包' }}</button>
+            <button class="btn" :disabled="state.diagnosing" @click="runDiagnose">
+              {{ state.diagnosing ? '诊断中…' : '🔍 深度诊断我的欠缺' }}</button>
+          </div>
+
+          <!-- 深度诊断 -->
+          <div v-if="state.panel.diagnosis" class="ai-comment" style="margin-bottom:14px">
+            <b>{{ state.panel.diagnosis.gap_summary }}</b>
+            <div v-if="state.panel.diagnosis.missed_points && state.panel.diagnosis.missed_points.length" style="margin-top:8px">
+              <span class="hint">遗漏要点：</span>
+              <span v-for="m in state.panel.diagnosis.missed_points" :key="m" class="badge bad" style="margin:2px">{{ m }}</span>
+            </div>
+            <div v-if="state.panel.diagnosis.misconception" style="margin-top:6px">⚠️ 误区：{{ state.panel.diagnosis.misconception }}</div>
+            <div style="margin-top:6px">📌 {{ state.panel.diagnosis.review_advice }}</div>
+          </div>
+
+          <!-- 知识包（系统完整知识） -->
+          <div v-if="state.panel.knowledge_pack" class="pack-box" style="margin-bottom:14px">
+            <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">📖 系统知识包（完整原理 · 变体问法 · 识别信号）</h4>
+            <div class="doc-body" style="max-height:340px; overflow:auto" v-html="renderAnswer(state.panel.knowledge_pack.content)"></div>
+          </div>
+
+          <!-- 弱点证据 -->
+          <div v-if="state.panel.evidence && state.panel.evidence.length" style="margin-bottom:14px">
+            <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">证据 · 我的历次作答</h4>
+            <div v-for="(e, i) in state.panel.evidence" :key="i" class="rel-item" style="flex-wrap:wrap">
+              <span class="badge" :class="e.score >= 60 ? 'warn' : 'bad'">{{ e.score }} 分</span>
+              <span class="t">{{ e.title }}</span>
+              <span class="hint" style="width:100%">{{ e.comment }}</span>
+            </div>
+          </div>
+
+          <!-- 相关八股卡 -->
+          <div v-if="state.panel.cards && state.panel.cards.length" style="margin-bottom:14px">
+            <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">⚡ 速记卡（点击标记背诵状态）</h4>
+            <div v-for="c in state.panel.cards" :key="c.id" class="rel-item" style="flex-wrap:wrap; align-items:flex-start">
+              <div style="width:100%; display:flex; gap:8px; align-items:center">
+                <span class="badge" :class="CARD_STATUS_META[c.status].cls">{{ CARD_STATUS_META[c.status].label }}</span>
+                <b style="font-size:13px">{{ c.title }}</b>
+              </div>
+              <div class="hint" style="width:100%">{{ c.content }}</div>
+              <div style="width:100%; display:flex; gap:6px">
+                <button class="btn small danger" :disabled="c.status === 'new'" @click="markCard(c.id, 'new')">未掌握</button>
+                <button class="btn small" :disabled="c.status === 'learning'" @click="markCard(c.id, 'learning')">待巩固</button>
+                <button class="btn small primary" :disabled="c.status === 'mastered'" @click="markCard(c.id, 'mastered')">已背熟</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 关联面试题 -->
+          <div v-if="state.panel.questions && state.panel.questions.length">
+            <h4 style="font-size:13px; color:#5b6478; margin-bottom:8px">📋 该知识点考过的面试题</h4>
+            <div class="rel-list">
+              <div v-for="q in state.panel.questions" :key="q.id" class="rel-item">
+                <span class="t">{{ q.title }}</span>
+                <span v-if="q.my_attempts.length" class="badge" :class="q.my_attempts[q.my_attempts.length-1].score >= 60 ? 'warn' : 'bad'">
+                  最近 {{ q.my_attempts[q.my_attempts.length-1].score }} 分</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="answer-actions"><button class="btn" @click="closePanel">关闭</button></div>
+        </template>
       </div>
     </div>
   </div>
   `,
-};
-
-/* ---------- 八股文库（背诵卡片 + 体系长文档，与面试题库分离） ---------- */
-const CARD_STATUS_META = {
-  new: { label: '未学', cls: 'gray' },
-  learning: { label: '待巩固', cls: 'warn' },
-  mastered: { label: '已背熟', cls: 'ok' },
 };
 
 const StudyView = {
@@ -601,7 +807,7 @@ const StudyView = {
 const SessionsView = {
   name: 'SessionsView',
   setup() {
-    const state = reactive({ list: [], detail: null, loading: true });
+    const state = reactive({ list: [], detail: null, loading: true, cardMap: {}, cardDetail: null });
     async function load() {
       // 已有数据时静默刷新（KeepAlive 激活），仅首次显示加载态
       state.loading = state.list.length === 0 && !state.detail;
@@ -611,12 +817,28 @@ const SessionsView = {
     async function openDetail(id) {
       state.detail = await api(`/interviews/${id}`);
       window.scrollTo({ top: 0 });
+      // 并行拉取各题关联八股卡（复盘里直接给出"背哪几张卡"）
+      state.cardMap = {};
+      const answered = state.detail.answers.filter(a => a.answered);
+      await Promise.all(answered.map(async a => {
+        try {
+          const r = await api(`/questions/${a.question_id}/cards`);
+          if (r.cards.length) state.cardMap[a.question_id] = r.cards;
+        } catch (e) { /* 忽略 */ }
+      }));
     }
     function back() { state.detail = null; }
     function exportMd() { window.open('/api/interviews/' + state.detail.id + '/export'); }
+    async function markCard(cardId, status) {
+      try {
+        await api(`/study/cards/${cardId}/status`, { method: 'POST', body: { status } });
+        if (state.cardDetail && state.cardDetail.id === cardId) state.cardDetail.status = status;
+        state.cardMap = { ...state.cardMap, ...Object.fromEntries(Object.entries(state.cardMap).map(([qid, cs]) => [qid, cs.map(c => c.id === cardId ? { ...c, status } : c)])) };
+      } catch (e) { /* 忽略 */ }
+    }
     onMounted(load);
     onActivated(() => { if (state.list.length || state.detail) load(); });
-    return { state, openDetail, back, exportMd, fmtTime, scoreClass, renderAnswer, CATEGORY_NAMES, DIFF_LABEL };
+    return { state, openDetail, back, exportMd, markCard, fmtTime, scoreClass, renderAnswer, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL };
   },
   template: `
   <div>
@@ -661,6 +883,11 @@ const SessionsView = {
           </div>
           <div class="detail-body">
             <div v-if="a.ai_comment" class="ai-comment">{{ a.ai_comment }}</div>
+            <div v-if="state.cardMap[a.question_id] && state.cardMap[a.question_id].length" class="know-strip">
+              <span class="hint" style="flex-shrink:0; align-self:center">📚 相关八股</span>
+              <span v-for="c in state.cardMap[a.question_id]" :key="c.id" class="chip small" @click="state.cardDetail = { ...c }">
+                {{ CARD_STATUS_META[c.status].label }} · {{ c.title }}</span>
+            </div>
             <div class="compare">
               <div><h4>你的回答</h4><div class="box you" style="max-height:none">{{ a.answered ? (a.user_answer || '（未作答）') : '未作答' }}</div></div>
               <div><h4>满分答案</h4><div class="box model" style="max-height:none" v-html="renderAnswer(a.answered ? a.model_answer : '（提交后可见）')"></div></div>
@@ -669,6 +896,30 @@ const SessionsView = {
         </div>
       </div>
     </template>
+
+    <!-- 复盘内的八股卡弹窗 -->
+    <div v-if="state.cardDetail" class="modal-mask" @click.self="state.cardDetail = null">
+      <div class="modal">
+        <h3>{{ state.cardDetail.title }}</h3>
+        <div class="q-meta" style="margin-bottom:12px">
+          <span class="badge">{{ state.cardDetail.category_name }}</span>
+          <span class="badge" :class="CARD_STATUS_META[state.cardDetail.status].cls">{{ CARD_STATUS_META[state.cardDetail.status].label }}</span>
+        </div>
+        <div class="box you" style="max-height:none; margin-bottom:12px">{{ state.cardDetail.content }}</div>
+        <div v-if="state.cardDetail.points && state.cardDetail.points.length" class="know-strip" style="border:none; padding:0; margin-bottom:14px">
+          <span class="hint" style="flex-shrink:0; align-self:center">⚡ 关键点</span>
+          <span v-for="(p, i) in state.cardDetail.points" :key="i" class="badge gray">{{ p }}</span>
+        </div>
+        <div class="know-strip" style="border:none; padding:0">
+          <button class="btn small danger" :disabled="state.cardDetail.status === 'new'" @click="markCard(state.cardDetail.id, 'new')">未掌握</button>
+          <button class="btn small" :disabled="state.cardDetail.status === 'learning'" @click="markCard(state.cardDetail.id, 'learning')">待巩固</button>
+          <button class="btn small primary" :disabled="state.cardDetail.status === 'mastered'" @click="markCard(state.cardDetail.id, 'mastered')">✓ 已背熟</button>
+        </div>
+        <div class="answer-actions">
+          <button class="btn" @click="state.cardDetail = null">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
   `,
 };
@@ -1200,6 +1451,7 @@ const App = {
     }
     function onHome() { view.value = 'home'; sessionId.value = null; resumeSession.value = null; }
     function onInterviewFinished() { loadStats(); checkResume(); loadHealth(); }
+    function onVariantStart(sid) { sessionId.value = sid; view.value = 'interview'; }
 
     onMounted(() => {
       applyHash();          // 按 URL hash 恢复页面（如刷新前在面试页）
@@ -1211,7 +1463,7 @@ const App = {
       view, tabs, health, go, sessionId,
       position, count, categories, picked, toggleCat, starting, error, llmEnabled,
       startInterview, quickDrill, stats, chart, loadHealth,
-      resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished,
+      resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished, onVariantStart,
     };
   },
 };

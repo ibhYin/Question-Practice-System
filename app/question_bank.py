@@ -122,7 +122,11 @@ def _category_pool(db: DBSession, category: str) -> list[Question]:
 
 
 def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Question]:
-    """按类别权重抽题：答错过的题优先重现，其次没答过的，最后随机旧题"""
+    """按类别权重抽题：答错过的题优先重现，其次含薄弱知识点的未做题，最后随机旧题"""
+    import json as _json
+
+    from .redis_client import rdb as _rdb
+
     alloc = allocate(weights, count)
 
     # 历史答题情况
@@ -133,6 +137,20 @@ def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Q
         if score is not None and score < 60:
             wrong_ids.add(qid)
 
+    # 薄弱知识点集合（tag 级，驱动"换汤不换药"迁移：弱 tag 的题即使没直接答错也优先）
+    weak_tags: set[str] = set()
+    cached = _rdb.get("weakness:cache")
+    if cached:
+        try:
+            data = _json.loads(cached)
+            weak_tags = {n["tag"] for n in data.get("weak_points", [])}
+        except ValueError:
+            pass
+
+    def weak_score(q: Question) -> int:
+        """题目命中的薄弱知识点数（排序权重）"""
+        return sum(1 for t in q.tags or [] if t in weak_tags)
+
     picked: list[Question] = []
     for cat, n in alloc.items():
         pool = _category_pool(db, cat)
@@ -142,8 +160,9 @@ def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Q
         # 错题按"错得最频繁"排序（Redis ZSET 高频错题榜）
         wrong.sort(key=lambda q: -(rdb.zscore("question:hot", str(q.id)) or 0))
         unseen = [q for q in pool if q.id not in seen_ids]
+        # 弱点迁移：含弱 tag 的未做题置顶（按命中弱 tag 数降序）
+        unseen.sort(key=weak_score, reverse=True)
         seen = [q for q in pool if q.id in seen_ids and q.id not in wrong_ids]
-        random.shuffle(unseen)
         random.shuffle(seen)
         picked.extend((wrong + unseen + seen)[:n])
     return picked

@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from . import llm, question_bank, review
+from .analysis import invalidate_weakness_cache
 from .backup import maybe_backup
 from .database import SessionLocal
 from .errors import BizError
@@ -204,6 +205,7 @@ def _score_in_background(answer_id: int, category: str, title: str,
             rdb.hincrby(STATS_KEY, f"{category}:count", 1)
             if score:
                 rdb.hincrby(STATS_KEY, f"{category}:score", score)
+            invalidate_weakness_cache()  # 新评分影响弱点画像
     finally:
         db.close()
 
@@ -300,6 +302,7 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
             rdb.hincrby(STATS_KEY, f"{question.category}:count", 1)
             if score:
                 rdb.hincrby(STATS_KEY, f"{question.category}:score", score)
+            invalidate_weakness_cache()  # 新评分影响弱点画像
 
     # 推进进度
     answered = (

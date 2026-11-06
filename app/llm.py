@@ -172,6 +172,108 @@ def evaluate_answer(title: str, model_answer: str, user_answer: str) -> dict:
     return {"score": score, "comment": comment}
 
 
+# ---------- 知识点：知识包 / 诊断 / 变体 ----------
+
+PACK_SYSTEM = (
+    "你是资深技术面试教练。你将拿到一个知识点的名称、所属方向，以及候选人在该知识点下的"
+    "真实作答记录（含分数与点评）。请生成一份系统、全面的知识文档——这不是背诵卡，"
+    "而是能支撑候选人应对该知识点任何问法的完整知识来源。只输出 JSON。"
+)
+
+
+def generate_knowledge_pack(tag: str, category: str, evidence: list[dict]) -> dict:
+    """为知识点生成系统知识包：完整原理 + 边界细节 + 变体问法清单 + 识别信号。
+
+    evidence 是候选人在该知识点下的真实作答（题目/回答/分数/点评）——
+    生成内容必须针对性覆盖候选人暴露的弱点，而不是泛泛的百科。
+    返回 {content: markdown 文档, variant_questions: 变体问法清单}。
+    """
+    ev_lines = []
+    for e in evidence[:5]:
+        ev_lines.append(
+            f"- 题：{e['title']}（得分 {e.get('score', '未评')}）\n"
+            f"  我的回答摘要：{str(e.get('user_answer', ''))[:300]}\n"
+            f"  点评：{str(e.get('comment', ''))[:200]}"
+        )
+    ev_text = "\n".join(ev_lines) if ev_lines else "（暂无作答记录，请按通用高频考点组织）"
+    user = (
+        f"知识点：{tag}\n所属方向：{category}\n\n"
+        f"候选人在该知识点下的真实作答：\n{ev_text}\n\n"
+        "请生成该知识点的系统知识包（Markdown），结构如下：\n"
+        "## 核心原理\n（完整讲透该知识点：是什么、为什么这么设计、底层机制推导）\n"
+        "## 关键细节与边界\n（容易忽略的细节、特殊情况、与其他知识的交界）\n"
+        "## 实战要点\n（真实工作中怎么用、和面试官互动时的加分表达）\n"
+        "## 常见变体问法\n（列出 5~8 种该知识点的不同问法/角度，让候选人见到换装题也能认出）\n"
+        "## 识别信号\n（题干出现什么关键词时应立刻想到这个知识点）\n\n"
+        "要求：① 必须针对上面候选人暴露的弱点重点补强；② 内容完整系统，不要写成要点罗列；"
+        "③ 1200 字以内。\n"
+        '同时返回该知识点的变体问法题（可作为面试题练习）：'
+        '{"content": "markdown", "variant_questions": [{"title": "变体题干", "difficulty": 2}]}'
+    )
+    text = _chat(
+        [{"role": "system", "content": PACK_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.4,
+        timeout=120,
+    )
+    data = _parse_json(text)
+    return {
+        "content": str(data.get("content", "")).strip(),
+        "variant_questions": data.get("variant_questions") or [],
+    }
+
+
+DIAG_SYSTEM = (
+    "你是面试诊断教练。根据候选人在一个知识点下的真实作答（含分数与点评），"
+    "诊断具体欠缺。只输出 JSON。"
+)
+
+
+def diagnose_tag(tag: str, category: str, evidence: list[dict]) -> dict:
+    """基于真实作答诊断该知识点的具体欠缺（区别于知识包的通用知识）。"""
+    ev_lines = []
+    for e in evidence[:5]:
+        ev_lines.append(
+            f"- 题：{e['title']}（得分 {e.get('score', '未评')}）\n"
+            f"  我的回答：{str(e.get('user_answer', ''))[:300]}\n"
+            f"  点评：{str(e.get('comment', ''))[:200]}"
+        )
+    user = (
+        f"知识点：{tag}（{category}）\n候选人作答：\n" + "\n".join(ev_lines) + "\n\n"
+        "请诊断：候选人在这个知识点上具体缺什么、有什么误区、下一步怎么补。\n"
+        '返回 JSON：{"gap_summary": "缺什么（80字内）", "missed_points": ["遗漏要点", ...], '
+        '"misconception": "需要纠正的误区（没有则为空字符串）", '
+        '"review_advice": "具体复习路径（80字内）", "severity": "high|medium|low"}'
+    )
+    text = _chat(
+        [{"role": "system", "content": DIAG_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.2,
+    )
+    return _parse_json(text)
+
+
+VARIANT_SYSTEM = (
+    "你是面试出题官。围绕一个知识知识点生成多道变体面试题——同一核心知识、"
+    "不同问法/角度/场景，用于训练候选人识别换装题。只输出 JSON。"
+)
+
+
+def generate_variants(tag: str, category: str, base_titles: list[str], n: int) -> list[dict]:
+    avoid = "、".join(base_titles[:8]) if base_titles else "（无）"
+    user = (
+        f"知识点：{tag}（{category}）\n"
+        f"已有原题（严禁重复或近似改写）：{avoid}\n\n"
+        f"请生成 {n} 道该知识点的变体面试题：不同问法、不同切入角度、或结合真实场景提问，"
+        "但核心考点不变。难度覆盖 1~3。\n"
+        '返回 JSON：{"questions": [{"title": "...", "difficulty": 2, "tags": ["..."]}]}'
+    )
+    text = _chat(
+        [{"role": "system", "content": VARIANT_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.7,
+    )
+    data = _parse_json(text)
+    return data.get("questions", [])
+
+
 # ---------- 知识关联 ----------
 
 LINK_SYSTEM = (
@@ -207,6 +309,42 @@ def judge_question_pairs(pairs: list[dict]) -> list[dict]:
         a_id, b_id = pair.split("-", 1)
         if a_id.isdigit() and b_id.isdigit():
             out.append({"a_id": int(a_id), "b_id": int(b_id), "linked": bool(r.get("linked"))})
+    return out
+
+
+CARD_PICK_SYSTEM = (
+    "你是知识映射专家。给定面试题和同一方向下的知识点卡片列表，"
+    "挑出能帮助回答该题的卡片（知识相邻或互补）。只输出 JSON。"
+)
+
+
+def pick_cards_for_question(questions: list, cards_by_cat: dict) -> list[dict]:
+    """批量：为无规则边的题目挑选相关八股卡。
+    questions: [Question]，cards_by_cat: {category: [StudyCard]}。
+    返回 [{question_id: int, card_ids: [int]}]。
+    """
+    out = []
+    for q in questions:
+        cards = cards_by_cat.get(q.category, [])
+        if not cards:
+            continue
+        listing = "\n".join(f"{c.id}. {c.title}" for c in cards[:30])
+        user = (
+            f"面试题：{q.title}\n题目标签：{'、'.join(q.tags or [])}\n\n"
+            f"候选知识点卡：\n{listing}\n\n"
+            "挑出 1~5 张能帮助回答该题的卡（id 列表），无关则返回空。"
+            '返回 JSON：{"question_id": %d, "card_ids": [1, 2]}' % q.id
+        )
+        text = _chat(
+            [{"role": "system", "content": CARD_PICK_SYSTEM}, {"role": "user", "content": user}],
+            temperature=0.1,
+        )
+        try:
+            data = _parse_json(text)
+            if data.get("question_id") == q.id:
+                out.append({"question_id": q.id, "card_ids": data.get("card_ids", [])})
+        except ValueError:
+            continue
     return out
 
 
