@@ -20,6 +20,12 @@ const CATEGORY_NAMES = {
   AI_APP: 'AI 应用开发', AGENT: 'Agent 开发', FULLSTACK: '全栈开发',
   OS: '操作系统', DISTRIBUTED: '分布式', ALGO: '算法', PYTHON: 'Python',
 };
+/* 八股卡背诵状态元数据（八股文库 / 行动面板 / 相关八股条共用） */
+const CARD_STATUS_META = {
+  new: { label: '未学', cls: 'gray' },
+  learning: { label: '待巩固', cls: 'warn' },
+  mastered: { label: '已背熟', cls: 'ok' },
+};
 const DIFF_LABEL = { 1: '易', 2: '中', 3: '难' };
 const DIFF_COLOR = { 1: 'ok', 2: 'warn', 3: 'bad' };
 
