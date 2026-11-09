@@ -264,6 +264,31 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
 .flip-front { font-size: 22px; font-weight: 700; text-align: center; line-height: 1.6; padding: 20px; }
 .flip-back { font-size: 15px; line-height: 1.85; white-space: pre-wrap; padding: 6px 10px; }
 
+/* ===== 题号导航条 ===== */
+.q-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.q-nav-btn {
+  width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line);
+  background: #fff; font-size: 13px; cursor: pointer; color: var(--ink2); font-family: inherit;
+}
+.q-nav-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.q-nav-btn.done { background: #e8f7ee; border-color: #b7e4c7; color: var(--ok); font-weight: 600; }
+.q-nav-btn.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.q-nav-btn.locked { opacity: .35; cursor: not-allowed; }
+
+/* ===== AI 追问面板 ===== */
+.chat-panel { margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.chat-head {
+  display: flex; align-items: center; padding: 10px 14px; background: #f8f9fc;
+  font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink2);
+}
+.chat-head:hover { background: #f0f2fa; }
+.chat-body { padding: 12px 14px; border-top: 1px solid var(--line); max-height: 420px; overflow: auto; }
+.chat-msg { display: flex; flex-direction: column; margin-bottom: 10px; }
+.chat-msg.assistant { align-items: flex-start; }
+.chat-msg.user { align-items: flex-end; }
+.chat-bubble { max-width: 88% !important; margin: 0 !important; max-height: none !important; }
+.chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
+
 @media (max-width: 860px) {
   .home-grid, .compare, .grid2 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }

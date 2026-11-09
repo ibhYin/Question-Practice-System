@@ -110,6 +110,42 @@ def abandon_interview(sid: int, db: DBSession = Depends(get_db)):
     return interview_svc.finish_interview(db, sid, abandoned=True)
 
 
+@router.get("/{sid}/questions")
+def session_questions(sid: int, db: DBSession = Depends(get_db)):
+    """本场题目导航列表（题号切换用；不暴露满分答案）"""
+    session = db.get(InterviewSession, sid)
+    if not session:
+        raise BizError("面试场次不存在", 404)
+    qids = session.question_ids or []
+    ans_map = {a.question_id: a for a in session.answers}
+    qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
+    items = []
+    for idx, qid in enumerate(qids, 1):
+        q = qmap.get(qid)
+        if not q:
+            continue
+        a = ans_map.get(qid)
+        items.append(
+            {
+                "id": qid,
+                "seq": idx,
+                "title": q.title,
+                "category": q.category,
+                "difficulty": q.difficulty,
+                "answered": a is not None,
+                "score": a.score if a else None,
+            }
+        )
+    answered_count = sum(1 for i in items if i["answered"])
+    return {
+        "session_id": sid,
+        "status": session.status,
+        "mode": session.mode,
+        "items": items,
+        "answered_count": answered_count,
+    }
+
+
 @router.get("/{sid}/answers/{qid}/score")
 def get_answer_score(sid: int, qid: int, db: DBSession = Depends(get_db)):
     """轮询异步评分结果（scoring=true 期间前端每 2s 调一次）"""

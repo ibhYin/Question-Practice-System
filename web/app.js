@@ -167,6 +167,13 @@ const InterviewView = {
       relatedCards: [],      // 本题关联八股卡（知识点速记）
       cardDetail: null,      // 点开的八股卡
       packState: {},         // cardId -> {loading, content} 知识包懒生成
+      sessionQs: [],         // 本场题目导航列表
+      answeredCount: 0,
+      draftSaved: false,     // 草稿保存微提示
+      chats: {},             // qid -> [{role, content}] AI 追问历史（内存级）
+      chatInput: '',
+      chatSending: false,
+      chatOpen: true,        // 追问面板展开状态
     });
 
     function startTimer() {
@@ -187,7 +194,11 @@ const InterviewView = {
       } catch (e) { state.answer = ''; }
     }
     function saveDraft() {
-      try { localStorage.setItem(draftKey(), state.answer); } catch (e) { /* 忽略 */ }
+      try {
+        localStorage.setItem(draftKey(), state.answer);
+        state.draftSaved = true;
+        setTimeout(() => { state.draftSaved = false; }, 1500);
+      } catch (e) { /* 忽略 */ }
     }
     function clearDraft() {
       try { localStorage.removeItem(draftKey()); } catch (e) { /* 忽略 */ }
@@ -248,6 +259,88 @@ const InterviewView = {
         state.relatedCards = c.cards;
       } catch (e) { /* 忽略 */ }
     }
+
+    /* 题号导航：拉取本场题目列表 + 切换题目 */
+    async function loadSessionQs() {
+      try {
+        const d = await api(`/interviews/${props.sessionId}/questions`);
+        state.sessionQs = d.items;
+        state.answeredCount = d.answered_count;
+      } catch (e) { /* 忽略 */ }
+    }
+    // 可切换的范围：已答题 + 顺位下一题（越题防护规则的前端镜像）
+    const unlockedIds = computed(() => {
+      const n = state.answeredCount || 0;
+      return new Set(state.sessionQs.filter(i => i.seq <= n + 1).map(i => i.id));
+    });
+    async function gotoQuestion(qid) {
+      if (!unlockedIds.value.has(qid) || state.submitting) return;
+      saveDraft();               // 切走前保存当前草稿（按题隔离，互不影响）
+      if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+      stopTimer();
+      const item = state.sessionQs.find(i => i.id === qid);
+      if (!item) return;
+      if (item.answered) {
+        // 已答题 → 结果视图（从导航数据重建，含分数与对比）
+        const d = await api(`/interviews/${props.sessionId}`);
+        const mine = d.answers.find(a => a.question_id === qid);
+        if (!mine) return;
+        state.result = {
+          question_id: qid, seq: mine.seq,
+          score: mine.score, ai_comment: mine.ai_comment,
+          user_answer: mine.user_answer, model_answer: mine.model_answer,
+          scoring: false,
+          next_question: null, finished: false, revisiting: true,
+          title: item.title, related: state.knowledge, relatedCards: state.relatedCards,
+        };
+        state.question = null;
+        state.phase = 'result';
+        loadKnowledge(qid);
+      } else {
+        // 可答未答题 → 答题视图（恢复草稿 + 上次作答提示）
+        const p = await api(`/interviews/${props.sessionId}/progress`);
+        if (p.question && p.question.id === qid) {
+          state.question = p.question;
+          state.answer = ''; state.result = null; state.addedReview = false;
+          state.phase = 'answering';
+          restoreDraft();
+          startTimer();
+        }
+      }
+      nextTick(enhanceDiagrams);
+    }
+
+    /* AI 追问（结果视图内，带题目上下文的多轮对话） */
+    function chatList() {
+      const key = state.result ? state.result.question_id : 0;
+      if (!state.chats[key]) state.chats[key] = [];
+      return state.chats[key];
+    }
+    async function sendChat() {
+      const q = state.chatInput.trim();
+      if (!q || state.chatSending || !state.result) return;
+      if (!state.llmEnabled) { state.error = 'AI 追问需要先在「设置」中配置 LLM'; return; }
+      state.chatSending = true; state.error = '';
+      const history = chatList();
+      history.push({ role: 'user', content: q });
+      state.chatInput = '';
+      try {
+        const r = await api('/analysis/ask', {
+          method: 'POST',
+          body: {
+            messages: history.map(m => ({ role: m.role, content: m.content })),
+            question_title: state.result.revisiting ? '' : (state.question ? state.question.title : ''),
+            model_answer: state.result.model_answer,
+            user_answer: state.result.user_answer,
+          },
+        });
+        history.push({ role: 'assistant', content: r.reply });
+        nextTick(enhanceDiagrams);
+      } catch (e) {
+        history.push({ role: 'assistant', content: `⚠️ ${e.message}` });
+      }
+      state.chatSending = false;
+    }
     function openRelated(k) {
       state.relatedDetail = k;   // k 含 title/category_name/model_answer
     }
@@ -287,12 +380,18 @@ const InterviewView = {
         state.phase = 'result';
         if (r.scoring) pollScore();   // 异步评分：立即展示对比，分数轮询补显
         loadKnowledge(r.question_id); // 后台拉关联考点，不阻塞展示
+        loadSessionQs();              // 刷新题号导航（答题状态变化）
         nextTick(enhanceDiagrams);
       } catch (e) { state.error = e.message; }
       state.submitting = false;
     }
 
     async function nextQuestion() {
+      // 重访历史题的结果视图：返回当前待答题
+      if (state.result && state.result.revisiting) {
+        const cur = state.sessionQs.find(i => i.seq === state.answeredCount + 1);
+        if (cur) return gotoQuestion(cur.id);
+      }
       if (state.result.finished) return finish();
       state.question = state.result.next_question;
       state.answer = '';
@@ -326,10 +425,10 @@ const InterviewView = {
       emit('abandoned');
     }
 
-    onMounted(loadProgress);
+    onMounted(() => { loadProgress(); loadSessionQs(); });
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, openCard, markCard, loadPackForCard, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, sendChat, chatList, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -341,6 +440,19 @@ const InterviewView = {
         <span class="badge">第 {{ state.question.seq }} / {{ state.total }} 题</span>
         <div class="progress-track"><div class="progress-fill" :style="{width: (state.question.seq - 1) / state.total * 100 + '%'}"></div></div>
         <button class="btn small ghost danger" @click="abandon">放弃本场</button>
+      </div>
+      <!-- 题号导航：点击切换题目（锁定题置灰） -->
+      <div class="q-nav">
+        <button v-for="item in state.sessionQs" :key="item.id"
+                class="q-nav-btn"
+                :class="{
+                  on: state.question && state.question.id === item.id,
+                  done: item.answered,
+                  locked: !unlockedIds.has(item.id),
+                }"
+                :disabled="!unlockedIds.has(item.id) || state.submitting"
+                :title="item.title"
+                @click="gotoQuestion(item.id)">{{ item.seq }}</button>
       </div>
       <div class="card q-card">
         <div class="q-meta">
@@ -356,7 +468,7 @@ const InterviewView = {
         </div>
       </div>
       <div class="card">
-        <h3>你的回答 <span class="hint">草稿自动保存 · Ctrl+Enter 提交</span></h3>
+        <h3>你的回答 <span class="hint">草稿自动保存 <span v-if="state.draftSaved" class="badge ok" style="margin-left:4px">✓ 已保存</span> · Ctrl+Enter 提交</span></h3>
         <textarea v-model="state.answer" class="input" rows="7"
                   @input="saveDraft" @keydown.ctrl.enter.prevent="submit(false)"
                   placeholder="像真实面试一样，把你知道的点都写出来：概念 → 原理 → 实践…（结构化作答更容易拿分）"></textarea>
@@ -407,9 +519,36 @@ const InterviewView = {
             {{ CARD_STATUS_META[c.status].label }} · {{ c.title }}</span>
         </div>
         <div class="answer-actions">
-          <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
-          <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
-          <span v-if="state.addedReview" class="badge ok" style="align-self:center">已加入错题本，明天复习</span>
+          <button v-if="state.result.revisiting" class="btn primary" @click="nextQuestion">← 回到当前题目</button>
+          <template v-else>
+            <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
+            <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
+            <span v-if="state.addedReview" class="badge ok" style="align-self:center">已加入错题本，明天复习</span>
+          </template>
+        </div>
+
+        <!-- 💬 AI 追问：提交/跳过后直接向 AI 提问 -->
+        <div class="chat-panel">
+          <div class="chat-head" @click="state.chatOpen = !state.chatOpen">
+            💬 追问 AI（针对本题的疑问，如"为什么这里用间隙锁？"）
+            <span style="margin-left:auto">{{ state.chatOpen ? '▾' : '▸' }}</span>
+          </div>
+          <div v-show="state.chatOpen" class="chat-body">
+            <div v-if="!state.llmEnabled" class="hint" style="padding:8px 0">AI 追问需要先在「设置」中配置 LLM</div>
+            <template v-else>
+              <div v-for="(m, i) in chatList()" :key="i" class="chat-msg" :class="m.role">
+                <div v-if="m.role === 'assistant'" class="box model chat-bubble" v-html="renderAnswer(m.content)"></div>
+                <div v-else class="box you chat-bubble">{{ m.content }}</div>
+              </div>
+              <div v-if="state.chatSending" class="hint" style="padding:4px 0">AI 思考中…</div>
+              <div class="chat-input-row">
+                <input v-model="state.chatInput" class="input" style="flex:1"
+                       placeholder="针对本题追问，如：这个知识点还会怎么考？"
+                       @keyup.enter="sendChat" :disabled="state.chatSending">
+                <button class="btn primary" :disabled="state.chatSending || !state.chatInput.trim()" @click="sendChat">发送</button>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </template>

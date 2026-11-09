@@ -58,6 +58,42 @@ def diagnose(body: dict, db: DBSession = Depends(get_db)):
     return diag
 
 
+@router.post("/ask")
+def ask_ai(body: dict, db: DBSession = Depends(get_db)):
+    """答题结果页的 AI 追问：带题目上下文的多轮对话（前端维护 messages 历史）"""
+    if not llm.is_enabled():
+        raise BizError("AI 追问需要先在设置中配置 LLM")
+    messages = body.get("messages") or []
+    if not isinstance(messages, list) or not messages:
+        raise BizError("messages 不能为空")
+    if len(messages) > 20:
+        messages = messages[-20:]
+    cleaned = []
+    for m in messages:
+        role, content = str(m.get("role", "")), str(m.get("content", ""))[:2000]
+        if role in ("user", "assistant") and content.strip():
+            cleaned.append({"role": role, "content": content})
+    if not cleaned or cleaned[-1]["role"] != "user":
+        raise BizError("最后一条消息必须是用户提问")
+
+    question_title = str(body.get("question_title", ""))[:200]
+    model_answer = str(body.get("model_answer", ""))[:3000]
+    user_answer = str(body.get("user_answer", ""))[:1500]
+    system = (
+        "你是这场模拟面试的复盘教练。候选人刚答完一道题，现在针对这道题向你追问。"
+        "回答要求：紧扣这道题的知识点、结合候选人的实际回答（哪里没说到点子上就直接指出）、"
+        "简洁分点、中文。不要复述题目。\n\n"
+        f"【面试题】{question_title}\n"
+        f"【满分答案】\n{model_answer or '（略）'}\n"
+        f"【候选人的回答】\n{user_answer or '（跳过未答）'}"
+    )
+    try:
+        reply = llm._chat([{"role": "system", "content": system}] + cleaned, temperature=0.5)
+    except Exception as e:
+        raise BizError(f"AI 回复失败：{type(e).__name__}，请稍后重试")
+    return {"reply": reply.strip()}
+
+
 @router.post("/knowledge-pack")
 def knowledge_pack(body: dict, db: DBSession = Depends(get_db)):
     """获取（或懒生成）知识点的系统知识包——完整知识来源，非速记卡"""
