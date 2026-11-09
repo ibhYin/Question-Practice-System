@@ -264,6 +264,11 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
 .flip-front { font-size: 22px; font-weight: 700; text-align: center; line-height: 1.6; padding: 20px; }
 .flip-back { font-size: 15px; line-height: 1.85; white-space: pre-wrap; padding: 6px 10px; }
 
+/* ===== 岗位历史回填 ===== */
+.recent-pos { display: inline-flex; align-items: center; gap: 6px; }
+.recent-pos .del { font-style: normal; color: #c3cad9; font-size: 11px; padding: 0 2px; }
+.recent-pos .del:hover { color: var(--bad); }
+
 /* ===== 题号导航条 ===== */
 .q-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .q-nav-btn {

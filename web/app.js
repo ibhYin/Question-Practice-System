@@ -1551,9 +1551,39 @@ const App = {
     const starting = ref(false);
     const error = ref('');
     const llmEnabled = ref(false);
+    const recentPositions = ref([]);   // 历史岗位（localStorage 记忆，点击回填）
     const stats = reactive({});
     const chart = ref(null);
     let chartInst = null;
+
+    /* 岗位历史 + 上次设置的记忆（localStorage） */
+    function loadRecentPositions() {
+      try { recentPositions.value = JSON.parse(localStorage.getItem('recent_positions') || '[]'); }
+      catch (e) { recentPositions.value = []; }
+    }
+    function rememberPosition(pos) {
+      let list = recentPositions.value.filter(p => p !== pos);
+      list.unshift(pos);
+      recentPositions.value = list.slice(0, 8);
+      try { localStorage.setItem('recent_positions', JSON.stringify(recentPositions.value)); } catch (e) { /* 忽略 */ }
+    }
+    function removeRecentPosition(pos) {
+      recentPositions.value = recentPositions.value.filter(p => p !== pos);
+      try { localStorage.setItem('recent_positions', JSON.stringify(recentPositions.value)); } catch (e) { /* 忽略 */ }
+    }
+    function saveLastSettings() {
+      try {
+        localStorage.setItem('last_settings', JSON.stringify({ count: count.value, categories: picked.value }));
+      } catch (e) { /* 忽略 */ }
+    }
+    function restoreLastSettings() {
+      try {
+        const s = JSON.parse(localStorage.getItem('last_settings') || 'null');
+        if (!s) return;
+        if ([5, 10, 15].includes(s.count)) count.value = s.count;
+        if (Array.isArray(s.categories)) picked.value = s.categories.filter(c => (categories.value || []).some(x => x.code === c) || ['MYSQL','REDIS','JAVA','JVM','CONCURRENT','SPRING','NETWORK','SCENARIO','AI_APP','AGENT','FULLSTACK','OS','DISTRIBUTED','ALGO','PYTHON'].includes(c));
+      } catch (e) { /* 忽略 */ }
+    }
 
     function go(v) { view.value = v; }
 
@@ -1655,6 +1685,8 @@ const App = {
         sessionId.value = r.session_id;
         view.value = 'interview';
         resumeSession.value = null;
+        rememberPosition(position.value);   // 记住岗位（下次一键回填）
+        saveLastSettings();                 // 记住题数与考察范围
       } catch (e) { error.value = e.message; }
       starting.value = false;
     }
@@ -1697,13 +1729,17 @@ const App = {
 
     onMounted(() => {
       applyHash();          // 按 URL hash 恢复页面（如刷新前在面试页）
+      loadRecentPositions(); // 历史岗位回填列表
       loadHealth(); loadMeta(); loadStats(); checkResume();
+      // 类别元数据到达后恢复上次的考察范围选择
+      nextTick(() => { restoreLastSettings(); picked.value = picked.value.filter(c => !categories.value.length || categories.value.some(x => x.code === c)); });
       setInterval(loadHealth, 30000);  // 健康徽章自动跟随服务状态
     });
 
     return {
       view, tabs, health, go, sessionId,
       position, count, categories, picked, toggleCat, starting, error, llmEnabled,
+      recentPositions, removeRecentPosition,
       startInterview, quickDrill, stats, chart, loadHealth,
       resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished, onVariantStart,
     };

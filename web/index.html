@@ -55,6 +55,11 @@
           <div class="form-row">
             <label>应聘岗位</label>
             <input v-model.trim="position" class="input" placeholder="例如：Java 后端开发（校招）/ Python 后端 / DBA" @keyup.enter="startInterview">
+            <div v-if="recentPositions.length" class="chips" style="margin-top:8px">
+              <span class="hint" style="align-self:center">最近使用：</span>
+              <span v-for="p in recentPositions" :key="p" class="chip small recent-pos" @click="position = p">
+                {{ p }} <i class="del" @click.stop="removeRecentPosition(p)">✕</i></span>
+            </div>
           </div>
           <div class="form-row">
             <label>题目数量</label>
