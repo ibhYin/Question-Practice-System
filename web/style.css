@@ -221,6 +221,14 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
   background: #f6f8ff; border: 1px solid #dfe4ff; border-radius: 10px; padding: 14px 16px;
 }
 
+/* ===== 上次作答提示（答题时唤起记忆） ===== */
+.prev-attempt {
+  margin-top: 14px; background: #fff7ed; border: 1px solid #fed7aa;
+  border-radius: 10px; padding: 10px 14px; font-size: 13px;
+}
+.prev-attempt .pa-head { color: #9a3412; margin-bottom: 4px; }
+.prev-attempt .pa-body { white-space: pre-wrap; line-height: 1.7; color: var(--ink2); margin-bottom: 4px; }
+
 /* ===== Markdown-lite 结构化渲染 ===== */
 .doc-body, .box.model, .answer-full, .pack-box .doc-body { white-space: normal; }
 .md-h2 { font-size: 19px; margin: 14px 0 8px; font-weight: 700; }

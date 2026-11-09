@@ -349,6 +349,11 @@ const InterviewView = {
           <span v-for="t in state.question.tags" :key="t" class="badge gray">{{ t }}</span>
         </div>
         <div class="q-title">{{ state.question.title }}</div>
+        <div v-if="state.question.prev_attempt" class="prev-attempt">
+          <div class="pa-head">⚠️ 上次作答 <b>{{ state.question.prev_attempt.score != null ? state.question.prev_attempt.score + ' 分' : '未评分' }}</b></div>
+          <div class="pa-body">{{ state.question.prev_attempt.user_answer }}</div>
+          <div v-if="state.question.prev_attempt.ai_comment" class="hint">点评：{{ state.question.prev_attempt.ai_comment }}</div>
+        </div>
       </div>
       <div class="card">
         <h3>你的回答 <span class="hint">草稿自动保存 · Ctrl+Enter 提交</span></h3>

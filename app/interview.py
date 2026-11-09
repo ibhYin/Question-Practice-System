@@ -41,7 +41,24 @@ def _skey(sid: int) -> str:
     return f"interview:session:{sid}"
 
 
-def _brief(question: Question, seq: int) -> dict:
+def _prev_attempt(db: DBSession, question_id: int) -> dict | None:
+    """该题最近一次作答（跨场次）。最近一次是跳过（空答案）则返回 None——无回顾价值。"""
+    ans = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.question_id == question_id)
+        .order_by(InterviewAnswer.answered_at.desc(), InterviewAnswer.id.desc())
+        .first()
+    )
+    if not ans or not (ans.user_answer or "").strip():
+        return None
+    return {
+        "score": ans.score,
+        "user_answer": ans.user_answer,
+        "ai_comment": (ans.ai_comment or "")[:200],
+    }
+
+
+def _brief(db: DBSession, question: Question, seq: int) -> dict:
     return {
         "id": question.id,
         "seq": seq,
@@ -49,6 +66,7 @@ def _brief(question: Question, seq: int) -> dict:
         "category": question.category,
         "difficulty": question.difficulty,
         "tags": question.tags or [],
+        "prev_attempt": _prev_attempt(db, question.id),  # 上次错误答案与分数（跳过的不显示）
     }
 
 
@@ -143,7 +161,7 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
         "session_id": session.id,
         "position": position,
         "total": len(picked),
-        "question": _brief(picked[0], 1),
+        "question": _brief(db, picked[0], 1),
         "used_llm": used_llm,
     }
 
@@ -319,7 +337,7 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
     _set_state(sid, current, qids)
 
     finished = current >= len(qids)
-    next_question = _brief(db.get(Question, qids[current]), current + 1) if not finished else None
+    next_question = _brief(db, db.get(Question, qids[current]), current + 1) if not finished else None
     return {
         "question_id": question_id,
         "seq": seq,
@@ -431,7 +449,7 @@ def current_question_brief(db: DBSession, session: InterviewSession, state: dict
     if current >= len(qids):
         return None
     q = db.get(Question, qids[current])
-    return _brief(q, current + 1) if q else None
+    return _brief(db, q, current + 1) if q else None
 
 
 # ---------- 统计（Redis HASH 缓存，miss 时从 MySQL 重建） ----------

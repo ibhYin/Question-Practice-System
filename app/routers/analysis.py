@@ -204,5 +204,6 @@ def variant_session(body: dict, db: DBSession = Depends(get_db)):
             "category": first.category,
             "difficulty": first.difficulty,
             "tags": first.tags or [],
+            "prev_attempt": interview_svc._prev_attempt(db, first.id),
         },
     }
