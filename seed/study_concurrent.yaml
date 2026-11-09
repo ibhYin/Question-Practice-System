@@ -1,80 +1,173 @@
-# 并发编程知识体系（陈述式背诵卡片）
 category: CONCURRENT
 doc:
-  title: "Java 并发编程知识体系全景"
-  content: |
-    并发编程的知识体系沿"内存模型 → 锁与同步 → 无锁化 → 线程协作 → 线程池与工程实践"五层展开：先理解为什么需要同步，再掌握同步的两类手段（锁与 CAS），最后落到线程池这个生产主战场。
-
-    ## 一、Java 内存模型：并发的根源
-
-    多线程问题的根源是可见性、有序性与原子性三者无法天然保证。JMM 用 happens-before 规则给程序员可见性契约：程序顺序、监视器锁、volatile 写读、start/join、传递性；没有同步的两个线程之间没有任何顺序保证，即数据竞争。volatile 提供可见性与禁止重排但不保证原子性：写刷主存、读取主存、前后插入内存屏障；它支撑状态标志位与双检锁单例（防 new 三步重排发布半成品对象）。
-
-    ## 二、锁：synchronized 与 AQS 体系
-
-    synchronized 基于对象头 Mark Word 与 Monitor，JDK6 引入锁升级：偏向锁（已废弃）→ 轻量级锁 CAS 自旋 → 重量级锁 monitor 挂起，随竞争渐进加重。AQS 是 JUC 的骨架：volatile state 承载语义（重入数、许可数、计数），CLH 变体双向队列管理等待线程，模板方法让子类只实现 tryAcquire 系列。ReentrantLock 在其上提供公平、可中断、超时与多 Condition，JDK6 后与 synchronized 性能接近，能用 synchronized 就用。wait/sleep/yield/join 的核心区别是是否要求持锁、是否释放锁。
-
-    ## 三、无锁化：CAS 与原子类
-
-    CAS 是 CPU 原子指令，内存值等于期望值才更新；三大问题是 ABA（AtomicStampedReference 版本号解决）、高竞争自旋空转（LongAdder 分段缓解）、只能保证单变量（AtomicReference 封装）。JUC 的 Atomic 类与 AQS 内部都建立在 CAS 之上，ConcurrentHashMap 的 CAS 插桶也是同一原理。
-
-    ## 四、线程协作工具
-
-    CountDownLatch 一次性等 N 件事完成（AQS 共享模式）；CyclicBarrier 到齐放行、可重用、带 barrierAction；Semaphore 控制同时并发数，是单机并发限流的直接实现，与限速率的 RateLimiter 互补。CompletableFuture 提供 thenApply（map）与 thenCompose（flatMap）两级编排，IO 回调务必加 Async 与自定义池。
-
-    ## 五、ThreadLocal 与线程池
-
-    ThreadLocal 把数据挂在线程自己的 ThreadLocalMap，key 弱引用 value 强引用，线程池线程长生不死导致泄漏，更危险的是跨任务串号，规范是 finally remove；池内传递上下文用 TransmittableThreadLocal。线程池七参数决定行为：执行顺序是核心线程 → 入队 → 非核心线程 → 拒绝策略；禁用 Executors 快捷方法，手动构造加有界队列；大小按 CPU/IO 密集公式起步、压测定案；业务线程池隔离、参数动态化、异常必须有兜底。
-
-    五层串成一条主线：JMM 解释问题根源，锁与 CAS 给出两类解法，协作工具解决线程间编排，线程池与 ThreadLocal 把理论落到生产——理解每一层的为什么，比背参数更能应对追问。
+  title: Java 并发编程知识体系全景
+  content: "并发编程的知识体系沿\"内存模型 → 锁与同步 → 无锁化 → 线程协作 → 线程池与工程实践\"五层展开：先理解为什么需要同步，再掌握同步的两类手段（锁与 CAS），最后落到线程池这个生产主战场。\n\
+    \n## 一、Java 内存模型：并发的根源\n\n多线程问题的根源是可见性、有序性与原子性三者无法天然保证。JMM 用 happens-before 规则给程序员可见性契约：程序顺序、监视器锁、volatile\
+    \ 写读、start/join、传递性；没有同步的两个线程之间没有任何顺序保证，即数据竞争。volatile 提供可见性与禁止重排但不保证原子性：写刷主存、读取主存、前后插入内存屏障；它支撑状态标志位与双检锁单例（防\
+    \ new 三步重排发布半成品对象）。\n\n## 二、锁：synchronized 与 AQS 体系\n\nsynchronized 基于对象头 Mark Word 与 Monitor，JDK6\
+    \ 引入锁升级：偏向锁（已废弃）→ 轻量级锁 CAS 自旋 → 重量级锁 monitor 挂起，随竞争渐进加重。AQS 是 JUC 的骨架：volatile state 承载语义（重入数、许可数、计数），CLH\
+    \ 变体双向队列管理等待线程，模板方法让子类只实现 tryAcquire 系列。ReentrantLock 在其上提供公平、可中断、超时与多 Condition，JDK6 后与 synchronized\
+    \ 性能接近，能用 synchronized 就用。wait/sleep/yield/join 的核心区别是是否要求持锁、是否释放锁。\n\n## 三、无锁化：CAS 与原子类\n\nCAS 是\
+    \ CPU 原子指令，内存值等于期望值才更新；三大问题是 ABA（AtomicStampedReference 版本号解决）、高竞争自旋空转（LongAdder 分段缓解）、只能保证单变量（AtomicReference\
+    \ 封装）。JUC 的 Atomic 类与 AQS 内部都建立在 CAS 之上，ConcurrentHashMap 的 CAS 插桶也是同一原理。\n\n## 四、线程协作工具\n\nCountDownLatch\
+    \ 一次性等 N 件事完成（AQS 共享模式）；CyclicBarrier 到齐放行、可重用、带 barrierAction；Semaphore 控制同时并发数，是单机并发限流的直接实现，与限速率的\
+    \ RateLimiter 互补。CompletableFuture 提供 thenApply（map）与 thenCompose（flatMap）两级编排，IO 回调务必加 Async 与自定义池。\n\
+    \n## 五、ThreadLocal 与线程池\n\nThreadLocal 把数据挂在线程自己的 ThreadLocalMap，key 弱引用 value 强引用，线程池线程长生不死导致泄漏，更危险的是跨任务串号，规范是\
+    \ finally remove；池内传递上下文用 TransmittableThreadLocal。线程池七参数决定行为：执行顺序是核心线程 → 入队 → 非核心线程 → 拒绝策略；禁用 Executors\
+    \ 快捷方法，手动构造加有界队列；大小按 CPU/IO 密集公式起步、压测定案；业务线程池隔离、参数动态化、异常必须有兜底。\n\n五层串成一条主线：JMM 解释问题根源，锁与 CAS 给出两类解法，协作工具解决线程间编排，线程池与\
+    \ ThreadLocal 把理论落到生产——理解每一层的为什么，比背参数更能应对追问。\n\n# \U0001F4CC 知识速览图\n\n把上面正文的零散知识串成一张张图——先自己复述，再对照图检验。\n\
+    \n### 线程池任务执行流程\n\n```mermaid\nflowchart TD\n    A[提交任务] --> B{核心线程未满?}\n    B -- 是 --> C[新建核心线程执行]\n\
+    \    B -- 否 --> D{队列未满?}\n    D -- 是 --> E[任务入队等待]\n    D -- 否 --> F{线程数 < max?}\n    F -- 是 --> G[新建非核心线程执行]\n\
+    \    F -- 否 --> H[拒绝策略<br>Abort / CallerRuns / Discard]\n```\n"
 cards:
-  - title: "synchronized 的用法与 Monitor 底层原理"
-    content: "三种用法：修饰实例方法锁 this，静态方法锁 Class 对象，代码块锁指定对象。基于对象头 Mark Word 与 Monitor：对象关联一个 monitor（含 _owner、_EntryList、_WaitSet），字节码层面代码块编译为 monitorenter/monitorexit，同步方法带 ACC_SYNCHRONIZED 标志。JDK6 前直接走重量级 monitor，阻塞涉及用户态内核态切换性能差；JDK6 引入锁升级，让无竞争与低竞争场景接近无锁性能。"
-    points: ["实例方法锁 this，静态方法锁 Class，代码块锁指定对象", "对象头 Mark Word+ObjectMonitor 实现互斥", "字节码：monitorenter/monitorexit 与 ACC_SYNCHRONIZED", "JDK6 前直接重量级，内核态切换代价高"]
-  - title: "synchronized 的锁升级过程"
-    content: "JDK6 引入锁升级且只升不降。无锁状态下第一个线程反复获取时升级为偏向锁：Mark Word 记录线程 id，该线程后续进入无需 CAS，因撤销成本高已在 JDK15 废弃。第二个线程竞争时升级为轻量级锁：CAS 自旋尝试把 Mark Word 换成锁记录指针，适合持有时间短的场景。自旋失败、竞争激烈时膨胀为重量级锁：monitor 接管，未获取的线程阻塞挂起，涉及用户态与内核态切换。升级路径让锁随竞争强度渐进加重，兼顾低竞争性能与高竞争正确性。"
-    points: ["偏向锁：单线程重复获取记录线程 id，JDK15 已废弃", "轻量级锁：CAS 自旋，适合短持有", "重量级锁：monitor 挂起线程，内核态切换", "升级只升不降，随竞争强度渐进"]
-  - title: "volatile 的两大语义与内存屏障"
-    content: "volatile 提供两个语义：可见性——写立即刷回主存，读时从主存取，靠 MESI 缓存一致性协议失效其他 CPU 缓存行；禁止指令重排——读写前后插入内存屏障，写前 StoreStore、写后 StoreLoad、读后 LoadLoad 类屏障。happens-before 保证 volatile 写先行于后续读。不保证原子性：i++ 是读改写三步，多线程交错仍丢更新，需 AtomicInteger 或锁。典型应用是状态标志位与双检锁单例。"
-    points: ["可见性：写刷主存、读取主存，靠缓存一致性协议", "内存屏障禁止指令重排，写后 StoreLoad 最重", "不保证原子性，i++ 仍需 Atomic 类或锁", "happens-before：volatile 写先行于后续读"]
-  - title: "volatile 的典型应用场景"
-    content: "场景一是状态标志位：volatile boolean running 控制线程停止，写线程改值后读线程立即可见。场景二是双检锁单例：instance 必须声明为 volatile，因为 new 是三步——分配内存、初始化、赋值引用，重排序可能变成先赋值后初始化，别的线程拿到未初始化的对象。volatile 适合一写多读或状态发布这类无需复合原子性的场景；涉及计数的复合操作应改用 Atomic 类。理解 new 的重排风险是解释 DCL 与 happens-before 落地应用的经典结合点。"
-    points: ["状态标志：running 开关，写后立即可见", "DCL 单例必须 volatile，防 new 三步重排", "new = 分配内存、初始化、赋引用，重排发布半成品", "复合计数场景换 AtomicLong 而非 volatile"]
-  - title: "CAS 的原理与三大问题"
-    content: "CAS 即 Compare And Swap，三个操作数：内存值 V、期望值 E、新值 N，V 等于 E 才更新 N，否则自旋重试；JUC 经 Unsafe 提供底层支持，Atomic 类与 AQS 都基于它。三大问题：ABA——值 A→B→A，CAS 误以为没变，对引用结构有隐患，用 AtomicStampedReference 加版本号解决；高竞争自旋空转 CPU，用 LongAdder 分段缓解；只能保证单变量，多变量用 AtomicReference 封装或加锁。"
-    points: ["CAS：V==E 才更新 N，Unsafe 提供底层支持", "ABA 用 AtomicStampedReference 版本号解决", "高竞争自旋空转，LongAdder 分段缓解", "多变量原子用 AtomicReference 封装或加锁"]
-  - title: "AQS 的核心架构与模板方法"
-    content: "AQS 是 JUC 中锁与同步器的骨架。核心是一个 volatile int state，语义由子类定义：ReentrantLock 中是重入次数，Semaphore 中是许可数，CountDownLatch 中是计数。获取失败的线程包装成 Node 进入 CLH 变体的双向等待队列并 park 挂起，释放时唤醒队头后继。模板方法模式：子类只实现 tryAcquire/tryRelease（独占）或 tryAcquireShared（共享），排队挂起唤醒由 AQS 统一处理。"
-    points: ["核心：volatile state+CLH 变体双向等待队列", "state 语义由子类定义：重入数、许可数、计数", "模板方法：tryAcquire 系列子类实现，排队挂起唤醒统一处理", "ReentrantLock/Semaphore/CountDownLatch 皆基于 AQS"]
-  - title: "ReentrantLock 与 synchronized 的对比"
-    content: "两者都是可重入互斥锁。ReentrantLock 需在 finally 中手动 unlock，synchronized 自动释放。增强能力：公平锁（构造参数，检查队列防饥饿）、可中断获取 lockInterruptibly、超时获取 tryLock(time)、多 Condition 精准唤醒。公平与非公平的区别在抢锁策略：非公平（默认）先 CAS 插队一次，失败才排队，吞吐更高；公平锁必须检查队列有无等待者。JDK6 后性能接近，能用 synchronized 就用。"
-    points: ["ReentrantLock 手动 unlock，synchronized 自动释放", "增强：公平、可中断、超时、多 Condition", "非公平锁默认先插队一次，吞吐高", "JDK6 后性能接近，优先 synchronized"]
-  - title: "线程池的七个核心参数"
-    content: "ThreadPoolExecutor 七参数：corePoolSize 核心线程数、maximumPoolSize 最大线程数、keepAliveTime 加 unit 非核心线程空闲存活时间、workQueue 任务队列、threadFactory 定制线程名、handler 拒绝策略。队列类型影响行为：有界用 ArrayBlockingQueue，无界队列使最大线程数与拒绝策略形同虚设；想让空闲线程先干活就配 SynchronousQueue 直接交接。"
-    points: ["core/max/keepAliveTime+unit/workQueue/factory/handler", "队列类型决定扩容行为：无界队列使 max 与拒绝失效", "SynchronousQueue 直接交接，让空闲线程优先干活", "threadFactory 命名线程便于排查"]
-  - title: "线程池的执行流程与拒绝策略"
-    content: "提交后的顺序：核心线程未满则新建核心线程执行（即使有空闲核心线程也不复用）；核心满了入队；队列满了新建非核心线程执行；达到 maximumPoolSize 且队列仍满则执行拒绝策略。注意顺序是先入队后扩线程，与直觉相反。四种内置拒绝策略：AbortPolicy 默认抛异常；CallerRunsPolicy 调用者线程自己执行形成反压降速；DiscardPolicy 静默丢弃；DiscardOldestPolicy 丢最老任务；生产常用自定义策略记日志或落库重试。"
-    points: ["顺序：核心线程→入队→非核心线程→拒绝策略", "先入队后扩线程，与直觉相反", "CallerRunsPolicy 反压降速，Discard 静默丢弃", "自定义策略记录日志/落库重试更稳妥"]
-  - title: "线程池的实践规范与参数动态化"
-    content: "禁用 Executors 快捷方法：newFixedThreadPool 的无界队列可能堆积任务导致 OOM，newCachedThreadPool 线程数无上限可能失控，应手动 new ThreadPoolExecutor 配有界队列与合理拒绝策略。其余规范：不同业务线程池隔离，防核心接口被拖垮；threadFactory 给线程命名便于排查。参数动态化：setCorePoolSize 等支持运行时热更新，配合 activeCount、queueSize、拒绝次数监控告警。"
-    points: ["禁用 Executors：无界队列 OOM 或线程数失控", "手动 ThreadPoolExecutor+有界队列", "业务线程池隔离，防相互拖垮", "动态调参 setXxx+监控 activeCount/queueSize/拒绝数"]
-  - title: "线程池大小的设置方法"
-    content: "理论公式：CPU 密集型设 N 或 N+1（加一防缺页停顿浪费）；IO 密集型按 N 乘以（1 加等待时间与计算时间之比），经验值 2N。核数用 availableProcessors() 获取。公式只是起点：真实系统 IO 等待比例难估，应以压测为准，观察 CPU 利用率（目标 70~80%）、上下文切换与接口 RT，逐步调整。工程原则：核心与普通业务线程池隔离，队列有界配拒绝策略，线程命名，参数动态化并监控。"
-    points: ["CPU 密集 N 或 N+1，IO 密集按等待比公式或 2N", "公式是起点，压测定案：CPU 70~80% 为目标", "业务隔离+有界队列+命名线程", "动态调参与指标告警代替拍脑袋"]
-  - title: "线程池中任务异常的去向与处理"
-    content: "execute 提交的 Runnable 抛异常交给 UncaughtExceptionHandler，线程死亡并由线程池默默重建，监控线程数突变可发现；submit 的异常被吞进 FutureTask，只在 future.get 时以 ExecutionException 重抛，不 get 永远无人知晓。正确姿势：任务体最外层 try-catch 兜住并记日志上报，统一线程工厂兜底；submit 的 future 必须 get 或用 exceptionally 显式处理。"
-    points: ["execute 异常杀线程并静默重建，监控线程数突变", "submit 异常存 FutureTask，不 get 永不暴露", "任务最外层 try-catch+日志上报", "周期任务异常终止调度，必须内部捕获"]
-  - title: "wait、sleep、yield、join 的区别"
-    content: "wait 是 Object 方法，必须在 synchronized 块内调用，释放锁进入 WAITING，由 notify/notifyAll 或超时唤醒后重新竞争锁，用于线程间协作。sleep 是 Thread 静态方法，不释放锁，让出 CPU 一段时间进入 TIMED_WAITING，到时自醒。yield 只是提示愿意让出 CPU，回就绪态不释放锁，可能立即又被调度，不保证生效。join 等目标线程执行完再继续，底层是目标对象上的循环 wait。"
-    points: ["wait：Object 方法，持锁调用、释放锁、等通知", "sleep：Thread 方法，不释放锁，到时自醒", "yield：建议性让出 CPU，不释放锁不保证", "join 底层是目标对象上的 wait 循环"]
-  - title: "CountDownLatch 与 CyclicBarrier 的对比"
-    content: "CountDownLatch 语义是等 N 件事完成：N 个线程 countDown，主线程 await 等计数归零，一次性不可重置；典型用法是主任务等并行子任务、启动门闩放行。CyclicBarrier 语义是到齐一起走：N 个线程各自 await，到齐放行后栅栏重置可循环使用，可带 barrierAction 由最后到达的线程执行；有线程超时中断时栅栏 broken，需 reset。多阶段同步可看 Phaser，异步场景可用 allOf 替代。"
-    points: ["latch 一次性等 N 件事；barrier 到齐放行可重用", "barrier 支持 barrierAction 与 broken 机制", "latch 基于 AQS 共享模式，barrier 用 Lock+Condition", "多阶段用 Phaser，异步编排用 allOf"]
-  - title: "Semaphore 的语义与限流应用"
-    content: "Semaphore 维护 N 个许可：acquire 获取，无许可阻塞；release 归还，核心是控制同时并发数。限流：Semaphore(20) 每请求 acquire，finally release，同时最多 20 并发；tryAcquire 带超时支持快速失败实现限流降级。与 RateLimiter 区别：Semaphore 限同时数，RateLimiter 限每秒速率；分布式限流用 Redis 加 Lua 或 Sentinel。务必 finally 中 release，否则许可泄漏。"
-    points: ["acquire/release 控制同时并发数", "tryAcquire 快速失败实现限流降级", "与 RateLimiter 区别：限并发数 vs 限速率", "finally release 防许可泄漏", "分布式限流用 Redis+Lua 或 Sentinel"]
-  - title: "CompletableFuture 的异步编排"
-    content: "thenApply 接收 T 返回 U，是同步转换，等价 map；thenCompose 接收 T 返回 CompletableFuture<U>，扁平化异步串联避免嵌套，等价 flatMap。口诀：转换结果是现成的值用 thenApply；过程要发起另一个异步调用（拿 userId 再查详情）用 thenCompose。默认在完成线程或调用线程执行，加 Async 后缀提交 ForkJoinPool 或指定池，IO 务必 Async 加自定义池。"
-    points: ["thenApply 是 map，thenCompose 是 flatMap", "要发起二次异步调用用 thenCompose 防嵌套", "IO 回调务必 Async+自定义池", "thenCombine 合并两路，allOf 收集多路", "exceptionally/handle 沿链路兜异常"]
-  - title: "ThreadLocal 在线程池中的数据串号问题"
-    content: "线程池复用线程，任务 A set 了上下文没 remove，任务 B 在同一线程读到 A 的用户，形成跨请求数据泄漏。规范做法：Filter 或 Interceptor 入口 set、finally 中 remove，或用装饰器包装 Runnable 统一清理。跨线程池传递用 TransmittableThreadLocal：装饰任务捕获快照、执行时还原；InheritableThreadLocal 只在新建子线程时复制，池化线程不触发，虚拟线程下还要注意内存放大。"
-    points: ["串号=上一个任务的上下文泄漏给下一个任务", "入口 set、finally remove，框架靠 Filter 兜底", "TTL 装饰任务实现池内传递，Inheritable 不适用池", "虚拟线程下 ThreadLocal 有内存放大风险，ScopedValue 是演进"]
+- title: synchronized 的用法与 Monitor 底层原理
+  content: 三种用法：修饰实例方法锁 this，静态方法锁 Class 对象，代码块锁指定对象。基于对象头 Mark Word 与 Monitor：对象关联一个 monitor（含 _owner、_EntryList、_WaitSet），字节码层面代码块编译为
+    monitorenter/monitorexit，同步方法带 ACC_SYNCHRONIZED 标志。JDK6 前直接走重量级 monitor，阻塞涉及用户态内核态切换性能差；JDK6 引入锁升级，让无竞争与低竞争场景接近无锁性能。
+  points:
+  - 实例方法锁 this，静态方法锁 Class，代码块锁指定对象
+  - 对象头 Mark Word+ObjectMonitor 实现互斥
+  - 字节码：monitorenter/monitorexit 与 ACC_SYNCHRONIZED
+  - JDK6 前直接重量级，内核态切换代价高
+- title: synchronized 的锁升级过程
+  content: JDK6 引入锁升级且只升不降。无锁状态下第一个线程反复获取时升级为偏向锁：Mark Word 记录线程 id，该线程后续进入无需 CAS，因撤销成本高已在 JDK15 废弃。第二个线程竞争时升级为轻量级锁：CAS
+    自旋尝试把 Mark Word 换成锁记录指针，适合持有时间短的场景。自旋失败、竞争激烈时膨胀为重量级锁：monitor 接管，未获取的线程阻塞挂起，涉及用户态与内核态切换。升级路径让锁随竞争强度渐进加重，兼顾低竞争性能与高竞争正确性。
+  points:
+  - 偏向锁：单线程重复获取记录线程 id，JDK15 已废弃
+  - 轻量级锁：CAS 自旋，适合短持有
+  - 重量级锁：monitor 挂起线程，内核态切换
+  - 升级只升不降，随竞争强度渐进
+- title: volatile 的两大语义与内存屏障
+  content: volatile 提供两个语义：可见性——写立即刷回主存，读时从主存取，靠 MESI 缓存一致性协议失效其他 CPU 缓存行；禁止指令重排——读写前后插入内存屏障，写前 StoreStore、写后
+    StoreLoad、读后 LoadLoad 类屏障。happens-before 保证 volatile 写先行于后续读。不保证原子性：i++ 是读改写三步，多线程交错仍丢更新，需 AtomicInteger
+    或锁。典型应用是状态标志位与双检锁单例。
+  points:
+  - 可见性：写刷主存、读取主存，靠缓存一致性协议
+  - 内存屏障禁止指令重排，写后 StoreLoad 最重
+  - 不保证原子性，i++ 仍需 Atomic 类或锁
+  - happens-before：volatile 写先行于后续读
+- title: volatile 的典型应用场景
+  content: 场景一是状态标志位：volatile boolean running 控制线程停止，写线程改值后读线程立即可见。场景二是双检锁单例：instance 必须声明为 volatile，因为
+    new 是三步——分配内存、初始化、赋值引用，重排序可能变成先赋值后初始化，别的线程拿到未初始化的对象。volatile 适合一写多读或状态发布这类无需复合原子性的场景；涉及计数的复合操作应改用
+    Atomic 类。理解 new 的重排风险是解释 DCL 与 happens-before 落地应用的经典结合点。
+  points:
+  - 状态标志：running 开关，写后立即可见
+  - DCL 单例必须 volatile，防 new 三步重排
+  - new = 分配内存、初始化、赋引用，重排发布半成品
+  - 复合计数场景换 AtomicLong 而非 volatile
+- title: CAS 的原理与三大问题
+  content: CAS 即 Compare And Swap，三个操作数：内存值 V、期望值 E、新值 N，V 等于 E 才更新 N，否则自旋重试；JUC 经 Unsafe 提供底层支持，Atomic
+    类与 AQS 都基于它。三大问题：ABA——值 A→B→A，CAS 误以为没变，对引用结构有隐患，用 AtomicStampedReference 加版本号解决；高竞争自旋空转 CPU，用 LongAdder
+    分段缓解；只能保证单变量，多变量用 AtomicReference 封装或加锁。
+  points:
+  - CAS：V==E 才更新 N，Unsafe 提供底层支持
+  - ABA 用 AtomicStampedReference 版本号解决
+  - 高竞争自旋空转，LongAdder 分段缓解
+  - 多变量原子用 AtomicReference 封装或加锁
+- title: AQS 的核心架构与模板方法
+  content: AQS 是 JUC 中锁与同步器的骨架。核心是一个 volatile int state，语义由子类定义：ReentrantLock 中是重入次数，Semaphore 中是许可数，CountDownLatch
+    中是计数。获取失败的线程包装成 Node 进入 CLH 变体的双向等待队列并 park 挂起，释放时唤醒队头后继。模板方法模式：子类只实现 tryAcquire/tryRelease（独占）或 tryAcquireShared（共享），排队挂起唤醒由
+    AQS 统一处理。
+  points:
+  - 核心：volatile state+CLH 变体双向等待队列
+  - state 语义由子类定义：重入数、许可数、计数
+  - 模板方法：tryAcquire 系列子类实现，排队挂起唤醒统一处理
+  - ReentrantLock/Semaphore/CountDownLatch 皆基于 AQS
+- title: ReentrantLock 与 synchronized 的对比
+  content: 两者都是可重入互斥锁。ReentrantLock 需在 finally 中手动 unlock，synchronized 自动释放。增强能力：公平锁（构造参数，检查队列防饥饿）、可中断获取
+    lockInterruptibly、超时获取 tryLock(time)、多 Condition 精准唤醒。公平与非公平的区别在抢锁策略：非公平（默认）先 CAS 插队一次，失败才排队，吞吐更高；公平锁必须检查队列有无等待者。JDK6
+    后性能接近，能用 synchronized 就用。
+  points:
+  - ReentrantLock 手动 unlock，synchronized 自动释放
+  - 增强：公平、可中断、超时、多 Condition
+  - 非公平锁默认先插队一次，吞吐高
+  - JDK6 后性能接近，优先 synchronized
+- title: 线程池的七个核心参数
+  content: ThreadPoolExecutor 七参数：corePoolSize 核心线程数、maximumPoolSize 最大线程数、keepAliveTime 加 unit 非核心线程空闲存活时间、workQueue
+    任务队列、threadFactory 定制线程名、handler 拒绝策略。队列类型影响行为：有界用 ArrayBlockingQueue，无界队列使最大线程数与拒绝策略形同虚设；想让空闲线程先干活就配
+    SynchronousQueue 直接交接。
+  points:
+  - core/max/keepAliveTime+unit/workQueue/factory/handler
+  - 队列类型决定扩容行为：无界队列使 max 与拒绝失效
+  - SynchronousQueue 直接交接，让空闲线程优先干活
+  - threadFactory 命名线程便于排查
+- title: 线程池的执行流程与拒绝策略
+  content: 提交后的顺序：核心线程未满则新建核心线程执行（即使有空闲核心线程也不复用）；核心满了入队；队列满了新建非核心线程执行；达到 maximumPoolSize 且队列仍满则执行拒绝策略。注意顺序是先入队后扩线程，与直觉相反。四种内置拒绝策略：AbortPolicy
+    默认抛异常；CallerRunsPolicy 调用者线程自己执行形成反压降速；DiscardPolicy 静默丢弃；DiscardOldestPolicy 丢最老任务；生产常用自定义策略记日志或落库重试。
+  points:
+  - 顺序：核心线程→入队→非核心线程→拒绝策略
+  - 先入队后扩线程，与直觉相反
+  - CallerRunsPolicy 反压降速，Discard 静默丢弃
+  - 自定义策略记录日志/落库重试更稳妥
+- title: 线程池的实践规范与参数动态化
+  content: 禁用 Executors 快捷方法：newFixedThreadPool 的无界队列可能堆积任务导致 OOM，newCachedThreadPool 线程数无上限可能失控，应手动 new
+    ThreadPoolExecutor 配有界队列与合理拒绝策略。其余规范：不同业务线程池隔离，防核心接口被拖垮；threadFactory 给线程命名便于排查。参数动态化：setCorePoolSize
+    等支持运行时热更新，配合 activeCount、queueSize、拒绝次数监控告警。
+  points:
+  - 禁用 Executors：无界队列 OOM 或线程数失控
+  - 手动 ThreadPoolExecutor+有界队列
+  - 业务线程池隔离，防相互拖垮
+  - 动态调参 setXxx+监控 activeCount/queueSize/拒绝数
+- title: 线程池大小的设置方法
+  content: 理论公式：CPU 密集型设 N 或 N+1（加一防缺页停顿浪费）；IO 密集型按 N 乘以（1 加等待时间与计算时间之比），经验值 2N。核数用 availableProcessors()
+    获取。公式只是起点：真实系统 IO 等待比例难估，应以压测为准，观察 CPU 利用率（目标 70~80%）、上下文切换与接口 RT，逐步调整。工程原则：核心与普通业务线程池隔离，队列有界配拒绝策略，线程命名，参数动态化并监控。
+  points:
+  - CPU 密集 N 或 N+1，IO 密集按等待比公式或 2N
+  - 公式是起点，压测定案：CPU 70~80% 为目标
+  - 业务隔离+有界队列+命名线程
+  - 动态调参与指标告警代替拍脑袋
+- title: 线程池中任务异常的去向与处理
+  content: execute 提交的 Runnable 抛异常交给 UncaughtExceptionHandler，线程死亡并由线程池默默重建，监控线程数突变可发现；submit 的异常被吞进
+    FutureTask，只在 future.get 时以 ExecutionException 重抛，不 get 永远无人知晓。正确姿势：任务体最外层 try-catch 兜住并记日志上报，统一线程工厂兜底；submit
+    的 future 必须 get 或用 exceptionally 显式处理。
+  points:
+  - execute 异常杀线程并静默重建，监控线程数突变
+  - submit 异常存 FutureTask，不 get 永不暴露
+  - 任务最外层 try-catch+日志上报
+  - 周期任务异常终止调度，必须内部捕获
+- title: wait、sleep、yield、join 的区别
+  content: wait 是 Object 方法，必须在 synchronized 块内调用，释放锁进入 WAITING，由 notify/notifyAll 或超时唤醒后重新竞争锁，用于线程间协作。sleep
+    是 Thread 静态方法，不释放锁，让出 CPU 一段时间进入 TIMED_WAITING，到时自醒。yield 只是提示愿意让出 CPU，回就绪态不释放锁，可能立即又被调度，不保证生效。join
+    等目标线程执行完再继续，底层是目标对象上的循环 wait。
+  points:
+  - wait：Object 方法，持锁调用、释放锁、等通知
+  - sleep：Thread 方法，不释放锁，到时自醒
+  - yield：建议性让出 CPU，不释放锁不保证
+  - join 底层是目标对象上的 wait 循环
+- title: CountDownLatch 与 CyclicBarrier 的对比
+  content: CountDownLatch 语义是等 N 件事完成：N 个线程 countDown，主线程 await 等计数归零，一次性不可重置；典型用法是主任务等并行子任务、启动门闩放行。CyclicBarrier
+    语义是到齐一起走：N 个线程各自 await，到齐放行后栅栏重置可循环使用，可带 barrierAction 由最后到达的线程执行；有线程超时中断时栅栏 broken，需 reset。多阶段同步可看
+    Phaser，异步场景可用 allOf 替代。
+  points:
+  - latch 一次性等 N 件事；barrier 到齐放行可重用
+  - barrier 支持 barrierAction 与 broken 机制
+  - latch 基于 AQS 共享模式，barrier 用 Lock+Condition
+  - 多阶段用 Phaser，异步编排用 allOf
+- title: Semaphore 的语义与限流应用
+  content: Semaphore 维护 N 个许可：acquire 获取，无许可阻塞；release 归还，核心是控制同时并发数。限流：Semaphore(20) 每请求 acquire，finally
+    release，同时最多 20 并发；tryAcquire 带超时支持快速失败实现限流降级。与 RateLimiter 区别：Semaphore 限同时数，RateLimiter 限每秒速率；分布式限流用
+    Redis 加 Lua 或 Sentinel。务必 finally 中 release，否则许可泄漏。
+  points:
+  - acquire/release 控制同时并发数
+  - tryAcquire 快速失败实现限流降级
+  - 与 RateLimiter 区别：限并发数 vs 限速率
+  - finally release 防许可泄漏
+  - 分布式限流用 Redis+Lua 或 Sentinel
+- title: CompletableFuture 的异步编排
+  content: thenApply 接收 T 返回 U，是同步转换，等价 map；thenCompose 接收 T 返回 CompletableFuture<U>，扁平化异步串联避免嵌套，等价 flatMap。口诀：转换结果是现成的值用
+    thenApply；过程要发起另一个异步调用（拿 userId 再查详情）用 thenCompose。默认在完成线程或调用线程执行，加 Async 后缀提交 ForkJoinPool 或指定池，IO
+    务必 Async 加自定义池。
+  points:
+  - thenApply 是 map，thenCompose 是 flatMap
+  - 要发起二次异步调用用 thenCompose 防嵌套
+  - IO 回调务必 Async+自定义池
+  - thenCombine 合并两路，allOf 收集多路
+  - exceptionally/handle 沿链路兜异常
+- title: ThreadLocal 在线程池中的数据串号问题
+  content: 线程池复用线程，任务 A set 了上下文没 remove，任务 B 在同一线程读到 A 的用户，形成跨请求数据泄漏。规范做法：Filter 或 Interceptor 入口 set、finally
+    中 remove，或用装饰器包装 Runnable 统一清理。跨线程池传递用 TransmittableThreadLocal：装饰任务捕获快照、执行时还原；InheritableThreadLocal
+    只在新建子线程时复制，池化线程不触发，虚拟线程下还要注意内存放大。
+  points:
+  - 串号=上一个任务的上下文泄漏给下一个任务
+  - 入口 set、finally remove，框架靠 Filter 兜底
+  - TTL 装饰任务实现池内传递，Inheritable 不适用池
+  - 虚拟线程下 ThreadLocal 有内存放大风险，ScopedValue 是演进

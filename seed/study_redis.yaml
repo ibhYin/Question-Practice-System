@@ -1,104 +1,246 @@
-# 八股文库：Redis 体系文档 + 陈述式背诵卡片
 category: REDIS
 doc:
-  title: "Redis 知识体系全景"
-  content: |
-    # 一、性能之根：内存、单线程与特化数据结构
-
-    Redis 的快是四件事的合力：纯内存操作、epoll 驱动的单线程 Reactor 循环、特化数据结构、避免多线程竞争。单线程的前提是瓶颈在网络与内存而非 CPU；6.0 的 IO 多线程只管网络读写与协议解析，命令执行仍单线程保原子性。数据结构上，SDS 用 len 与 alloc 换来 O(1) 取长度、二进制安全与防溢出；字典靠两张表与 rehashidx 渐进式 rehash，把 O(n) 摊到每次操作；ZSet 同时持有跳表与字典，跳表按 score 保序，字典管 O(1) 点查。
-
-    # 二、持久化：RDB、AOF 与混合
-
-    RDB 用 fork 加写时复制生成瞬间快照，恢复快但两次快照间会丢数据，fork 停顿与写入大时内存翻倍是两大坑。AOF 逐条追加写命令按策略刷盘，everysec 是默认平衡点；膨胀靠重写压缩——fork 子进程按当前数据生成最小命令集，新写入进重写缓冲；损坏用 redis-check-aof 修复；7.0 的 Multi-Part AOF 消除重写毛刺。混合持久化取两者之长：前半段 RDB 全量、后半段增量命令，恢复快且丢得少，是缓存场景推荐配置。
-
-    # 三、内存治理：过期、淘汰与体积
-
-    过期删除靠惰性与定期配合：访问时检查，每 100ms 抽样清理，漏网的交给内存淘汰。maxmemory 打满后按策略淘汰，缓存场景选 allkeys-lru 或 allkeys-lfu——LRU 是随机采样近似实现，LFU 用对数计数器记频率。治本是全量 key 设 TTL 加抖动、精简编码、拆分大 key，监控碎片率。大 key 阻塞与倾斜，--bigkeys 发现、UNLINK 删除；热 key 打穿分片，靠本地缓存与后缀复制分摊。
-
-    # 四、缓存三问：穿透、击穿、雪崩与一致性
-
-    穿透、击穿、雪崩对应查不存在的数据、热点 key 失效瞬间、大量 key 同时失效三种打穿姿势，对策是布隆过滤器与缓存空值、互斥锁与逻辑过期、抖动加多级缓存加限流降级。缓存一致性走 Cache Aside：读 miss 回填，写先更新数据库再删除缓存——删除而非更新，因为并发写下更新顺序不可控；再用延迟双删、重试与 TTL 兜底。秒杀扣库存是综合应用：Redis 原子扣减挡并发、MQ 削峰落库、MySQL 条件更新兜底。
-
-    # 五、分布式功能：锁、限流与 Session
-
-    分布式锁的正确形态是 SET NX EX 加唯一 value，Lua 原子解锁，业务超时靠看门狗续期，正确性敏感场景配 fencing token 或换 etcd、ZK。限流四算法中固定窗口有突刺、滑动窗口平滑、漏桶整形、令牌桶容忍突发，一律 Lua 原子化。分布式 Session 把会话集中到 Redis 实现无状态扩展，DEL 即踢人；布隆过滤器用位数组加多哈希换来一定不存在的判定，是穿透拦截与去重的标配。
-
-    # 六、高可用与扩展：主从、哨兵、集群
-
-    主从复制靠 psync 完成全量 RDB 同步加增量传播，断线能否增量取决于 backlog 是否留得住断线期间的写入，按断线时长乘写入速率估算。哨兵补自动故障转移：quorum 确认客观下线后，Raft 式选 leader 按优先级与偏移量挑新主。Cluster 用 16384 哈希槽分片到多主，Gossip 去中心化通信，MOVED 与 ASK 重定向，多 key 靠 hash tag 归同槽。三者叠加，Redis 从单机缓存演进为可水平扩展的内存系统。
+  title: Redis 知识体系全景
+  content: "# 一、性能之根：内存、单线程与特化数据结构\n\nRedis 的快是四件事的合力：纯内存操作、epoll 驱动的单线程 Reactor 循环、特化数据结构、避免多线程竞争。单线程的前提是瓶颈在网络与内存而非\
+    \ CPU；6.0 的 IO 多线程只管网络读写与协议解析，命令执行仍单线程保原子性。数据结构上，SDS 用 len 与 alloc 换来 O(1) 取长度、二进制安全与防溢出；字典靠两张表与 rehashidx\
+    \ 渐进式 rehash，把 O(n) 摊到每次操作；ZSet 同时持有跳表与字典，跳表按 score 保序，字典管 O(1) 点查。\n\n# 二、持久化：RDB、AOF 与混合\n\nRDB\
+    \ 用 fork 加写时复制生成瞬间快照，恢复快但两次快照间会丢数据，fork 停顿与写入大时内存翻倍是两大坑。AOF 逐条追加写命令按策略刷盘，everysec 是默认平衡点；膨胀靠重写压缩——fork\
+    \ 子进程按当前数据生成最小命令集，新写入进重写缓冲；损坏用 redis-check-aof 修复；7.0 的 Multi-Part AOF 消除重写毛刺。混合持久化取两者之长：前半段 RDB 全量、后半段增量命令，恢复快且丢得少，是缓存场景推荐配置。\n\
+    \n# 三、内存治理：过期、淘汰与体积\n\n过期删除靠惰性与定期配合：访问时检查，每 100ms 抽样清理，漏网的交给内存淘汰。maxmemory 打满后按策略淘汰，缓存场景选 allkeys-lru\
+    \ 或 allkeys-lfu——LRU 是随机采样近似实现，LFU 用对数计数器记频率。治本是全量 key 设 TTL 加抖动、精简编码、拆分大 key，监控碎片率。大 key 阻塞与倾斜，--bigkeys\
+    \ 发现、UNLINK 删除；热 key 打穿分片，靠本地缓存与后缀复制分摊。\n\n# 四、缓存三问：穿透、击穿、雪崩与一致性\n\n穿透、击穿、雪崩对应查不存在的数据、热点 key 失效瞬间、大量\
+    \ key 同时失效三种打穿姿势，对策是布隆过滤器与缓存空值、互斥锁与逻辑过期、抖动加多级缓存加限流降级。缓存一致性走 Cache Aside：读 miss 回填，写先更新数据库再删除缓存——删除而非更新，因为并发写下更新顺序不可控；再用延迟双删、重试与\
+    \ TTL 兜底。秒杀扣库存是综合应用：Redis 原子扣减挡并发、MQ 削峰落库、MySQL 条件更新兜底。\n\n# 五、分布式功能：锁、限流与 Session\n\n分布式锁的正确形态是 SET\
+    \ NX EX 加唯一 value，Lua 原子解锁，业务超时靠看门狗续期，正确性敏感场景配 fencing token 或换 etcd、ZK。限流四算法中固定窗口有突刺、滑动窗口平滑、漏桶整形、令牌桶容忍突发，一律\
+    \ Lua 原子化。分布式 Session 把会话集中到 Redis 实现无状态扩展，DEL 即踢人；布隆过滤器用位数组加多哈希换来一定不存在的判定，是穿透拦截与去重的标配。\n\n# 六、高可用与扩展：主从、哨兵、集群\n\
+    \n主从复制靠 psync 完成全量 RDB 同步加增量传播，断线能否增量取决于 backlog 是否留得住断线期间的写入，按断线时长乘写入速率估算。哨兵补自动故障转移：quorum 确认客观下线后，Raft\
+    \ 式选 leader 按优先级与偏移量挑新主。Cluster 用 16384 哈希槽分片到多主，Gossip 去中心化通信，MOVED 与 ASK 重定向，多 key 靠 hash tag 归同槽。三者叠加，Redis\
+    \ 从单机缓存演进为可水平扩展的内存系统。\n\n# \U0001F4CC 知识速览图\n\n把上面正文的零散知识串成一张张图——先自己复述，再对照图检验。\n\n### 持久化：RDB 与 AOF\n\
+    \n```mermaid\nflowchart TD\n    A[写命令到达] --> B{持久化模式}\n    B -- RDB --> C[定时/手动 bgsave<br>fork 子进程\
+    \ + COW 快照]\n    C --> D[生成二进制 RDB<br>恢复快 但可能丢段数据]\n    B -- AOF --> E[追加写命令到缓冲]\n    E --> F[按策略刷盘<br>always\
+    \ / everysec / no]\n    F --> G[AOF 过大触发重写<br>fork 生成最小命令集]\n    B -- 混合 --> H[重写时 RDB 全量<br>+ 之后\
+    \ AOF 增量]\n```\n\n### 缓存三问定位决策树\n\n```mermaid\nflowchart TD\n    A[缓存异常] --> B{数据本来就不存在?}\n    B --\
+    \ 是 → 穿透 --> C[缓存空值 / 布隆过滤器]\n    B -- 存在但刚过期 --> D{是热点 key?}\n    D -- 是 → 击穿 --> E[互斥锁 / 逻辑过期]\n\
+    \    D -- 普通 key --> F{大量 key 同时失效?}\n    F -- 是 → 雪崩 --> G[TTL 加随机 / 多级缓存 / 限流]\n    F -- 否 --> H[正常回源]\n\
+    ```\n"
 cards:
-  - title: "Redis 快的四大原因"
-    content: "Redis 的速度来自四个合力。纯内存操作让读写本身就在内存级完成，单节点可扛十万以上 QPS。IO 多路复用加单线程事件循环，epoll 监听大量连接，单线程无锁也无上下文切换开销。高效数据结构如 SDS、跳表、压缩列表都是针对场景特化的实现，多数操作是 O(1) 或 O(logN)。单线程模型的取舍成立的前提是瓶颈在网络与内存而非 CPU，避免多线程竞争反而更快。6.0 起网络读写交给 IO 线程，命令执行仍是单线程以保住原子性。"
-    points: ["纯内存，10 万+ QPS", "epoll + 单线程无锁", "特化数据结构 O(1)/O(logN)", "6.0 IO 多线程，执行仍单线程"]
-  - title: "五大数据类型与底层编码"
-    content: "String 底层 SDS，承担缓存对象、计数器与分布式锁；Hash 小数据 listpack、超阈值转 hashtable，适合对象属性聚合；List 由 quicklist 组成，7.0 后是 listpack 节点串成的双向链表；Set 用 intset 或 hashtable，支撑去重与交并差；ZSet 是 skiplist 加 dict 双结构，跳表按分数保序，字典提供成员到分数的 O(1) 查询。进阶类型还有 BitMap、HyperLogLog、GEO 与 Stream。"
-    points: ["String=SDS，Hash/List 小数据用 listpack", "ZSet 双结构：skiplist + dict", "Set 支撑交并差集合运算", "BitMap/HLL/GEO/Stream 是场景特化"]
-  - title: "SDS 相比 C 字符串的优势"
-    content: "C 字符串取长度要遍历到结尾是 O(n)，以空字节结尾不能存二进制数据，拼接前不检查容量易缓冲区溢出。SDS 用 len、alloc、flags 加 buf 的结构逐条化解：读 len 直接得长度是 O(1)；按 len 处理内容天然二进制安全，能存序列化对象与图片；拼接前检查剩余空间不足先扩容；扩容时空间预分配，小于 1MB 翻倍、大于则多给 1MB，减少连续拼接的重分配；缩短时惰性释放留着重用。短字符串还有 embstr 编码把 SDS 头与对象头一次分配，缓存友好。"
-    points: ["O(1) 取长度", "二进制安全可存任意字节", "预分配 + 惰性释放减少 realloc", "embstr 编码优化短字符串"]
-  - title: "跳表的原理与 ZSet 的选型"
-    content: "跳表在有序链表上加多级索引，每层节点数约减半，查找从 O(n) 降到 O(logN)，插入删除只改指针不用旋转，节点层数随机生成、层数越高概率越低。ZSet 同时持有跳表与字典：跳表按 score 保序支撑范围查询与排名（span 记录跨度实现 ZRANK），字典负责 member 到 score 的 O(1) 定位。不用红黑树是因为实现简单、范围查询顺底层链表即达、无需旋转调平衡；不用 B+ 树是因为 Redis 在内存中没有磁盘 IO 顾虑，跳表天然够用。"
-    points: ["多级索引，查找 O(logN)", "skiplist 管序 + dict 管点查", "范围查询顺链走，优于红黑树回溯", "内存场景无 IO 顾虑，B+ 树无优势"]
-  - title: "字典的渐进式 rehash"
-    content: "Redis 字典持有两张哈希表，ht0 是主表，ht1 仅在 rehash 期间使用。负载因子超阈值触发扩容，缩容到 0.1 以下触发收缩。渐进式的做法是：rehash 开始后每次增删改查顺带把 ht0 中一个桶的链表整体迁移到 ht1，后台定时任务也会分批迁移；期间读操作查两张表，新增只写 ht1，保证 ht0 只减不增，迁完后互换角色。之所以渐进，是因为单线程下一次迁移千万级 key 会长时间阻塞服务，把 O(n) 摊到每次操作里用小常数换平滑。"
-    points: ["两张表 + rehashidx 渐进迁移", "迁移期间读两表、新写只进 ht1", "单线程防长阻塞是动机", "扩缩容阈值受 bgsave 子进程影响"]
-  - title: "单线程事件模型与 6.0 的 IO 多线程"
-    content: "Redis 主循环是 Reactor 模式：文件事件与时间事件统一在一个事件循环处理，Linux 上由 epoll 提供多路复用，线程永远在处理命令而不是等待 IO，命令执行是内存操作微秒级完成。6.0 的 IO 线程只并行化网络读取、协议解析与响应回写，命令执行仍单线程，原子性不变；io-threads 不是越多越好。单线程仍会卡的场景有大 key 删除、KEYS 全集合读、fork 与 AOF 刷盘慢。"
-    points: ["Reactor 循环：IO 事件 + 时间事件", "epoll 事件驱动非阻塞 IO", "6.0 多线程只管网络 IO", "慢命令与大 key 是残余阻塞点"]
-  - title: "RDB 持久化与 fork 写时复制"
-    content: "RDB 由 bgsave 触发：主进程 fork 子进程，父子共享同一份物理内存页，子进程遍历内存生成二进制快照写盘，完成后原子替换旧文件。写时复制保证子进程看到的是 fork 瞬间的一致快照——fork 后主进程继续服务，被修改的页才复制新页。两个代价：fork 本身复制页表，数据量大时主进程停顿可达上百毫秒；写入量大时被改页逐一复制，最坏内存近乎翻倍可能 OOM。监控 latest_fork_usec，生产必须关闭透明大页 THP 以免放大复制粒度。"
-    points: ["fork + COW 生成瞬间一致性快照", "恢复快，但两次快照间会丢数据", "fork 停顿 + 写入量大的内存翻倍", "关闭 THP，监控 latest_fork_usec"]
-  - title: "AOF 持久化、重写与修复"
-    content: "AOF 把每条写命令追加进缓冲按策略刷盘：always 不丢但慢，everysec 默认最多丢一秒，no 交给操作系统。文件膨胀靠 AOF 重写压缩——fork 子进程按当前数据生成最小命令集，期间新命令进重写缓冲防止丢失，完成后原子替换。AOF 是文本协议，写一半宕机损坏时启动默认拒绝加载，用 redis-check-aof --fix 截掉不完整尾部修复，aof-load-truncated 可容忍截断。7.0 的 Multi-Part AOF 拆成 base 与 incr，消除重写毛刺。"
-    points: ["appendfsync：always/everysec/no", "重写 = fork 按当前数据生成最小集", "redis-check-aof --fix 修复尾部", "7.0 Multi-Part 消除重写双写"]
-  - title: "混合持久化的设计"
-    content: "混合持久化在 4.0 引入，开关 aof-use-rdb-preamble。AOF 重写时文件前半段写成 RDB 全量二进制、后半段追加之后的增量命令，兼得两者之长：恢复时先加载 RDB 快照，速度接近 RDB，数据丢失窗口又接近 AOF 的秒级。取舍逻辑是 RDB 牺牲实时性换性能与恢复速度，AOF 牺牲性能换安全，混合持久化把这条权衡曲线整体上移。纯缓存场景也可以完全不持久化，由数据库侧保证数据安全。"
-    points: ["重写时前半 RDB、后半增量 AOF", "恢复快 + 丢得少", "4.0+ 开关 aof-use-rdb-preamble", "纯缓存可不持久化"]
-  - title: "过期删除与内存淘汰的策略体系"
-    content: "过期删除针对设 TTL 的 key：惰性删除访问时检查，省 CPU 但冷数据占内存；定期删除每 100ms 随机抽一批清理过期的，过期比例高就继续抽；两者配合，漏网的靠内存淘汰兜底。内存达 maxmemory 后按策略淘汰：noeviction 默认写报错，allkeys-lru 是缓存场景最常用，allkeys-lfu 适合热点更集中，volatile 系列只在设 TTL 的键里淘汰。Redis 的 LRU 是随机采样的近似实现，LFU 用对数计数器记频率。"
-    points: ["惰性 + 定期双策略配合", "缓存场景选 allkeys-lru / allkeys-lfu", "近似 LRU：随机采样", "LFU 对数计数器记频率"]
-  - title: "缓存穿透、击穿、雪崩的区分与对策"
-    content: "三者是三种打穿缓存的姿势。穿透是查询不存在的数据，缓存永不命中直打数据库，对策是布隆过滤器前置拦截、缓存空值加短 TTL、参数校验拒非法请求。击穿是某个热点 key 过期瞬间大量并发同时压向数据库，对策是互斥锁只放一个线程重建缓存、逻辑过期让物理永不过期异步刷新。雪崩是大量 key 同时过期或 Redis 整体宕机，对策是过期时间加随机抖动、多级缓存、限流降级熔断保护数据库、哨兵或集群保高可用、提前预热。"
-    points: ["穿透：不存在数据 → 布隆过滤器", "击穿：热点失效 → 互斥锁 / 逻辑过期", "雪崩：集体失效 → 抖动 + 多级缓存", "限流降级是雪崩的保底防线"]
-  - title: "Cache Aside 模式保证缓存一致性"
-    content: "Cache Aside 的读路径是先读缓存、miss 则读数据库回填；写路径是先更新数据库再删除缓存。删除而非更新缓存，因为并发写下更新顺序不可控可能把旧值写回，且缓存值常带加工逻辑，删除后惰性重建最简单。先更 DB 后删缓存，把不一致窗口压缩到读比写慢且恰好 miss 同时发生的概率事件；反过来先删缓存会出现旧值回填且脏到下次过期。增强手段有延迟双删、删除失败经消息队列或 Canal 订阅 binlog 异步重试、TTL 兜底最终一致，强一致需要分布式锁，代价是吞吐崩塌。"
-    points: ["读 miss 回填，写先 DB 后删缓存", "删缓存优于更新缓存", "先删缓存会让旧值回填", "延迟双删 + 重试 + TTL 兜底"]
-  - title: "分布式锁的正确实现与看门狗"
-    content: "正确形态是 SET lock_key unique_value NX EX 30：NX 保证互斥，EX 防进程挂掉后死锁，value 放 uuid 加线程 id 的唯一标识。解锁必须用 Lua 原子执行判断 value 是自己的才 DEL，防止任务超时后误删别人的锁。业务超过 TTL 时锁提前释放，解法是看门狗续期——后台线程定期把 TTL 续回直到任务完成，Redisson 默认实现。主从切换可能丢锁，用业务幂等或 fencing token 兜底。"
-    points: ["SET NX EX + 唯一 value", "Lua 原子校验再删除", "看门狗防业务超时锁先失效", "Redisson 开箱即用"]
-  - title: "Redlock 的做法与争议"
-    content: "Redlock 部署奇数个独立主节点，加锁时依次向所有节点 SET NX，多数派成功且总耗时小于锁有效期才算成功，失败则向全部节点发起释放，目的是摆脱主从复制延迟导致的锁丢失。争议来自 Martin Kleppmann 与 antirez 的论战：进程 GC 停顿与时钟跳跃可能让双方对锁是否有效产生分歧，Redlock 依赖时钟假设。共识是分场景：效率优化场景可用；正确性保证场景要 fencing token——递增令牌加存储层校验拒绝旧令牌——或换 ZooKeeper 与 etcd。"
-    points: ["多数派 + 总耗时小于有效期", "解决主从切换丢锁", "Martin 质疑时钟假设的安全性", "正确性场景用 fencing token 或换 CP 系统"]
-  - title: "主从复制的流程与 backlog 调优"
-    content: "首次同步走 psync：主库 bgsave 生成 RDB 发送，期间新写命令进 replication backlog 缓冲，从库载入后再接收增量；之后主库持续传播写命令。断线重连时带 replication id 与 offset，offset 还在 backlog 环形缓冲里走增量同步，被刷掉则退化为全量。backlog 按断线时长乘写入速率估算，太小会引发全量同步风暴——RDB 重建加主库 COW 内存暴涨甚至 OOM。配套还有无盘复制与 min-replicas 防脑裂孤写。"
-    points: ["全量 RDB + backlog 增量缓冲", "断线重连：offset 还在则增量", "backlog = 断线时长 × 写入速率", "全量同步风暴是最危险链路"]
-  - title: "哨兵的判定与故障转移"
-    content: "哨兵承担监控、故障判定、自动转移与通知客户端四项职责。判定分两级：单个哨兵 ping 超时是主观下线，达到 quorum 个哨兵都认为下线才确认客观下线。转移时哨兵之间 Raft 式选举 leader 执行：从库中先过滤断连久的，再比优先级、比复制偏移量取数据最全者、最后比 runid 选出新主，其余从库执行 SLAVEOF 指向它，旧主恢复后降级为从库，客户端通过订阅 switch-master 事件拿到新地址。部署至少三个且为奇数防脑裂，客户端要连哨兵地址而非写死主库 IP。"
-    points: ["SDOWN → ODOWN 需 quorum 确认", "Raft 式选 leader 执行转移", "选新主：优先级 → offset → runid", "至少 3 个奇数部署"]
-  - title: "Cluster 的哈希槽分片"
-    content: "Redis Cluster 把键空间划成 16384 个哈希槽，key 按 CRC16 取模落槽，槽分配给各主节点并支持在线迁移。槽位图随心跳传播，16384 的位图只有两 KB，且集群规模建议一千节点以内，再多浪费带宽。主从结构加 Gossip 协议去中心化通信，主挂了从库自动升主。客户端直连任意节点，key 不在本节点返回 MOVED 重定向，智能客户端缓存槽位映射直连正确节点，迁移期间用 ASK 临时重定向。多 key 操作要求同槽，用 hash tag 把相关 key 归到一起。"
-    points: ["CRC16(key) 对 16384 取模落槽", "16384 是心跳位图 2KB 的权衡", "MOVED / ASK 重定向", "hash tag 让多 key 同槽"]
-  - title: "Redis 事务、Lua 与 pipeline 的取舍"
-    content: "MULTI/EXEC 事务把命令入队后按序单线程执行，保证隔离性，但不支持回滚：入队报错整体不执行，运行时错误其余命令照常执行，也没有 undo。Lua 脚本整段作为单条命令原子执行，且能基于前一步结果做判断再操作，是事务做不到的能力，分布式锁解锁与限流都依赖它。pipeline 是客户端批量发送一次收齐，只省网络往返不保证原子性，适合批量导入与批量读取，注意几百到几千一批。三种手段的边界：要原子复合逻辑用 Lua，批量提交用事务，纯网络优化用 pipeline。"
-    points: ["事务无回滚、无 undo", "Lua 可判断可分支，原子执行", "pipeline 只省 RTT 非原子", "Lua 别太长以免阻塞"]
-  - title: "大 key 与热 key 的治理"
-    content: "大 key 指 value 过大或集合元素过多的 key，危害是删除与过期时阻塞单线程、网络拥塞、内存倾斜。发现用 redis-cli --bigkeys、RDB 离线分析与慢日志——多数慢命令根源就是大 key；处理上拆分、压缩 value、用 UNLINK 异步删除替代 DEL，超大 JSON 移回数据库。热 key 是单 key QPS 极高打满单个分片，用 --hotkeys 与客户端埋点发现，对策是本地缓存挡最热一层、key 加随机后缀复制多份分摊读、读写分离扩副本。"
-    points: ["大 key 阻塞单线程 + 内存倾斜", "UNLINK 惰性异步删除", "慢日志与 --bigkeys/--hotkeys 定位", "热 key 用本地缓存 + 多副本分摊"]
-  - title: "布隆过滤器的原理与应用"
-    content: "布隆过滤器用位数组加 k 个独立哈希函数：添加元素把 k 个位置置一，查询时全为一判可能存在、任一为零判一定不存在——有误判没有漏判，误判率由位数组大小、元素数与哈希数决定，百分之一误判约需每元素 9.6 bit，务必先预估容量再创建。只能加不能删，Counting 与 Cuckoo Filter 变体支持删除。实践上 Redis 4.0 后用 RedisBloom 模块，Java 侧有 Guava；典型应用是缓存穿透前置拦截、URL 去重、推荐已曝光去重。"
-    points: ["一定不存在 / 可能存在", "误判率由 m、n、k 决定", "不能删，Counting/Cuckoo 可补", "穿透拦截与去重的标配"]
-  - title: "排行榜、签到与延迟队列的实现"
-    content: "排行榜用 ZSet：score 存分数，ZINCRBY 加分，ZREVRANGE 取 TopN，ZREVRANK 查名次，并列名次可分数乘大基数加时间戳排前。签到用 BitMap：SETBIT 按天置位，一月 31 bit，BITCOUNT 统计天数。延迟队列用 ZSet：score 存执行时间戳，消费端循环 ZRANGEBYSCORE 取到期任务，取到即删需 Lua 原子，再执行业务并配重试幂等。点赞与共同好友走 Set 交并，UV 走 HyperLogLog 估算，附近的人走 GEO。"
-    points: ["ZSet 天然做排行榜", "BitMap 每月 31 bit 做签到", "延迟队列：score 存到期时间", "取任务即删须 Lua 原子"]
-  - title: "Redis 限流的方案选型"
-    content: "固定窗口计数用 INCR 加首次 EXPIRE，实现最简但窗口边界有突刺，两倍流量可能在交界瞬间放行。滑动窗口用 ZSet 记录请求时间戳，清理窗口外再计数，平滑但内存随请求量涨。漏桶恒定速率放行强制整形，保护脆弱下游却无法利用突发容量；令牌桶按速率补令牌，允许突发且平均速率受控，是网关默认算法。所有方案必须用 Lua 把读判写三步原子化，否则单线程外的穿插就会超发；工程上常做本地限流加 Redis 全局限流的双层结构。"
-    points: ["固定窗口有边界突刺", "滑动窗口平滑，令牌桶容忍突发", "漏桶强制整形保护下游", "Lua 原子化是硬要求"]
-  - title: "分布式 Session 的实现"
-    content: "多实例部署后本地 Session 导致请求换节点即未登录，标准解是会话集中存 Redis：登录时 SET session 键为用户 JSON 并设 TTL，每次访问续期实现滑动过期；Cookie 只放 HttpOnly 的 sid，所有实例从 Redis 读取，服务无状态可水平扩展，Spring Session 一行接入。注意 Session 控制在几 KB 内，Redis 要哨兵或集群保高可用；踢人下线只需 DEL 键，这是相对 JWT 的核心优势；JWT 是无状态的另一路线，两者常混合使用。"
-    points: ["会话集中化 = 无状态水平扩展", "滑动过期靠每次访问续期", "DEL 即踢人，优于 JWT 的可控性", "Redis 自身必须高可用"]
-  - title: "秒杀扣库存的分层设计"
-    content: "设计思路是 Redis 挡并发、MySQL 保最终正确。库存预热进 Redis，扣减用 Lua 完成取值、判断、递减三步，或直接 DECR 后判负回补，防超卖靠单线程原子性而不是先查后改。扣减成功发消息队列削峰，消费端落库用 UPDATE stock SET num=num-1 WHERE num>0 的条件更新兜底——数据库最后防线是 SQL 条件而不是应用判断。定期对账以库为准修正 Redis；消息失败重试配唯一业务单号幂等。整体是最终一致方案，宁可延迟不可超卖。"
-    points: ["Lua 原子扣减挡并发", "MQ 削峰异步落库", "DB 条件更新是最后防线", "对账以 DB 为准修 Redis"]
-  - title: "内存告警的应急与治本"
-    content: "内存打满先看成因：只加不删的缓存、忘设 TTL 的 key、大 key 堆积。应急是配 maxmemory 与合适淘汰策略让冷数据自动出局，临时用 UNLINK 清大 key、清理无 TTL 的 key。治本是全量 key 设 TTL 加随机抖动、精简编码如 hash 存对象替代序列化 JSON、小结构利用 listpack 自动编码，容量不够就 Cluster 加分片，历史明细移回数据库只留热点。监控 info memory 的碎片率，超 1.5 考虑开启 activedefrag。"
-    points: ["应急：maxmemory + 淘汰策略", "全量 TTL + 随机抖动", "hash 编码省内存，listpack 自动化", "碎片率超 1.5 开 activedefrag"]
+- title: Redis 快的四大原因
+  content: Redis 的速度来自四个合力。纯内存操作让读写本身就在内存级完成，单节点可扛十万以上 QPS。IO 多路复用加单线程事件循环，epoll 监听大量连接，单线程无锁也无上下文切换开销。高效数据结构如
+    SDS、跳表、压缩列表都是针对场景特化的实现，多数操作是 O(1) 或 O(logN)。单线程模型的取舍成立的前提是瓶颈在网络与内存而非 CPU，避免多线程竞争反而更快。6.0 起网络读写交给 IO
+    线程，命令执行仍是单线程以保住原子性。
+  points:
+  - 纯内存，10 万+ QPS
+  - epoll + 单线程无锁
+  - 特化数据结构 O(1)/O(logN)
+  - 6.0 IO 多线程，执行仍单线程
+- title: 五大数据类型与底层编码
+  content: String 底层 SDS，承担缓存对象、计数器与分布式锁；Hash 小数据 listpack、超阈值转 hashtable，适合对象属性聚合；List 由 quicklist 组成，7.0
+    后是 listpack 节点串成的双向链表；Set 用 intset 或 hashtable，支撑去重与交并差；ZSet 是 skiplist 加 dict 双结构，跳表按分数保序，字典提供成员到分数的
+    O(1) 查询。进阶类型还有 BitMap、HyperLogLog、GEO 与 Stream。
+  points:
+  - String=SDS，Hash/List 小数据用 listpack
+  - ZSet 双结构：skiplist + dict
+  - Set 支撑交并差集合运算
+  - BitMap/HLL/GEO/Stream 是场景特化
+- title: SDS 相比 C 字符串的优势
+  content: C 字符串取长度要遍历到结尾是 O(n)，以空字节结尾不能存二进制数据，拼接前不检查容量易缓冲区溢出。SDS 用 len、alloc、flags 加 buf 的结构逐条化解：读 len
+    直接得长度是 O(1)；按 len 处理内容天然二进制安全，能存序列化对象与图片；拼接前检查剩余空间不足先扩容；扩容时空间预分配，小于 1MB 翻倍、大于则多给 1MB，减少连续拼接的重分配；缩短时惰性释放留着重用。短字符串还有
+    embstr 编码把 SDS 头与对象头一次分配，缓存友好。
+  points:
+  - O(1) 取长度
+  - 二进制安全可存任意字节
+  - 预分配 + 惰性释放减少 realloc
+  - embstr 编码优化短字符串
+- title: 跳表的原理与 ZSet 的选型
+  content: 跳表在有序链表上加多级索引，每层节点数约减半，查找从 O(n) 降到 O(logN)，插入删除只改指针不用旋转，节点层数随机生成、层数越高概率越低。ZSet 同时持有跳表与字典：跳表按
+    score 保序支撑范围查询与排名（span 记录跨度实现 ZRANK），字典负责 member 到 score 的 O(1) 定位。不用红黑树是因为实现简单、范围查询顺底层链表即达、无需旋转调平衡；不用
+    B+ 树是因为 Redis 在内存中没有磁盘 IO 顾虑，跳表天然够用。
+  points:
+  - 多级索引，查找 O(logN)
+  - skiplist 管序 + dict 管点查
+  - 范围查询顺链走，优于红黑树回溯
+  - 内存场景无 IO 顾虑，B+ 树无优势
+- title: 字典的渐进式 rehash
+  content: Redis 字典持有两张哈希表，ht0 是主表，ht1 仅在 rehash 期间使用。负载因子超阈值触发扩容，缩容到 0.1 以下触发收缩。渐进式的做法是：rehash 开始后每次增删改查顺带把
+    ht0 中一个桶的链表整体迁移到 ht1，后台定时任务也会分批迁移；期间读操作查两张表，新增只写 ht1，保证 ht0 只减不增，迁完后互换角色。之所以渐进，是因为单线程下一次迁移千万级 key
+    会长时间阻塞服务，把 O(n) 摊到每次操作里用小常数换平滑。
+  points:
+  - 两张表 + rehashidx 渐进迁移
+  - 迁移期间读两表、新写只进 ht1
+  - 单线程防长阻塞是动机
+  - 扩缩容阈值受 bgsave 子进程影响
+- title: 单线程事件模型与 6.0 的 IO 多线程
+  content: Redis 主循环是 Reactor 模式：文件事件与时间事件统一在一个事件循环处理，Linux 上由 epoll 提供多路复用，线程永远在处理命令而不是等待 IO，命令执行是内存操作微秒级完成。6.0
+    的 IO 线程只并行化网络读取、协议解析与响应回写，命令执行仍单线程，原子性不变；io-threads 不是越多越好。单线程仍会卡的场景有大 key 删除、KEYS 全集合读、fork 与 AOF
+    刷盘慢。
+  points:
+  - Reactor 循环：IO 事件 + 时间事件
+  - epoll 事件驱动非阻塞 IO
+  - 6.0 多线程只管网络 IO
+  - 慢命令与大 key 是残余阻塞点
+- title: RDB 持久化与 fork 写时复制
+  content: RDB 由 bgsave 触发：主进程 fork 子进程，父子共享同一份物理内存页，子进程遍历内存生成二进制快照写盘，完成后原子替换旧文件。写时复制保证子进程看到的是 fork 瞬间的一致快照——fork
+    后主进程继续服务，被修改的页才复制新页。两个代价：fork 本身复制页表，数据量大时主进程停顿可达上百毫秒；写入量大时被改页逐一复制，最坏内存近乎翻倍可能 OOM。监控 latest_fork_usec，生产必须关闭透明大页
+    THP 以免放大复制粒度。
+  points:
+  - fork + COW 生成瞬间一致性快照
+  - 恢复快，但两次快照间会丢数据
+  - fork 停顿 + 写入量大的内存翻倍
+  - 关闭 THP，监控 latest_fork_usec
+- title: AOF 持久化、重写与修复
+  content: AOF 把每条写命令追加进缓冲按策略刷盘：always 不丢但慢，everysec 默认最多丢一秒，no 交给操作系统。文件膨胀靠 AOF 重写压缩——fork 子进程按当前数据生成最小命令集，期间新命令进重写缓冲防止丢失，完成后原子替换。AOF
+    是文本协议，写一半宕机损坏时启动默认拒绝加载，用 redis-check-aof --fix 截掉不完整尾部修复，aof-load-truncated 可容忍截断。7.0 的 Multi-Part
+    AOF 拆成 base 与 incr，消除重写毛刺。
+  points:
+  - appendfsync：always/everysec/no
+  - 重写 = fork 按当前数据生成最小集
+  - redis-check-aof --fix 修复尾部
+  - 7.0 Multi-Part 消除重写双写
+- title: 混合持久化的设计
+  content: 混合持久化在 4.0 引入，开关 aof-use-rdb-preamble。AOF 重写时文件前半段写成 RDB 全量二进制、后半段追加之后的增量命令，兼得两者之长：恢复时先加载 RDB
+    快照，速度接近 RDB，数据丢失窗口又接近 AOF 的秒级。取舍逻辑是 RDB 牺牲实时性换性能与恢复速度，AOF 牺牲性能换安全，混合持久化把这条权衡曲线整体上移。纯缓存场景也可以完全不持久化，由数据库侧保证数据安全。
+  points:
+  - 重写时前半 RDB、后半增量 AOF
+  - 恢复快 + 丢得少
+  - 4.0+ 开关 aof-use-rdb-preamble
+  - 纯缓存可不持久化
+- title: 过期删除与内存淘汰的策略体系
+  content: 过期删除针对设 TTL 的 key：惰性删除访问时检查，省 CPU 但冷数据占内存；定期删除每 100ms 随机抽一批清理过期的，过期比例高就继续抽；两者配合，漏网的靠内存淘汰兜底。内存达
+    maxmemory 后按策略淘汰：noeviction 默认写报错，allkeys-lru 是缓存场景最常用，allkeys-lfu 适合热点更集中，volatile 系列只在设 TTL 的键里淘汰。Redis
+    的 LRU 是随机采样的近似实现，LFU 用对数计数器记频率。
+  points:
+  - 惰性 + 定期双策略配合
+  - 缓存场景选 allkeys-lru / allkeys-lfu
+  - 近似 LRU：随机采样
+  - LFU 对数计数器记频率
+- title: 缓存穿透、击穿、雪崩的区分与对策
+  content: 三者是三种打穿缓存的姿势。穿透是查询不存在的数据，缓存永不命中直打数据库，对策是布隆过滤器前置拦截、缓存空值加短 TTL、参数校验拒非法请求。击穿是某个热点 key 过期瞬间大量并发同时压向数据库，对策是互斥锁只放一个线程重建缓存、逻辑过期让物理永不过期异步刷新。雪崩是大量
+    key 同时过期或 Redis 整体宕机，对策是过期时间加随机抖动、多级缓存、限流降级熔断保护数据库、哨兵或集群保高可用、提前预热。
+  points:
+  - 穿透：不存在数据 → 布隆过滤器
+  - 击穿：热点失效 → 互斥锁 / 逻辑过期
+  - 雪崩：集体失效 → 抖动 + 多级缓存
+  - 限流降级是雪崩的保底防线
+- title: Cache Aside 模式保证缓存一致性
+  content: Cache Aside 的读路径是先读缓存、miss 则读数据库回填；写路径是先更新数据库再删除缓存。删除而非更新缓存，因为并发写下更新顺序不可控可能把旧值写回，且缓存值常带加工逻辑，删除后惰性重建最简单。先更
+    DB 后删缓存，把不一致窗口压缩到读比写慢且恰好 miss 同时发生的概率事件；反过来先删缓存会出现旧值回填且脏到下次过期。增强手段有延迟双删、删除失败经消息队列或 Canal 订阅 binlog
+    异步重试、TTL 兜底最终一致，强一致需要分布式锁，代价是吞吐崩塌。
+  points:
+  - 读 miss 回填，写先 DB 后删缓存
+  - 删缓存优于更新缓存
+  - 先删缓存会让旧值回填
+  - 延迟双删 + 重试 + TTL 兜底
+- title: 分布式锁的正确实现与看门狗
+  content: 正确形态是 SET lock_key unique_value NX EX 30：NX 保证互斥，EX 防进程挂掉后死锁，value 放 uuid 加线程 id 的唯一标识。解锁必须用
+    Lua 原子执行判断 value 是自己的才 DEL，防止任务超时后误删别人的锁。业务超过 TTL 时锁提前释放，解法是看门狗续期——后台线程定期把 TTL 续回直到任务完成，Redisson 默认实现。主从切换可能丢锁，用业务幂等或
+    fencing token 兜底。
+  points:
+  - SET NX EX + 唯一 value
+  - Lua 原子校验再删除
+  - 看门狗防业务超时锁先失效
+  - Redisson 开箱即用
+- title: Redlock 的做法与争议
+  content: Redlock 部署奇数个独立主节点，加锁时依次向所有节点 SET NX，多数派成功且总耗时小于锁有效期才算成功，失败则向全部节点发起释放，目的是摆脱主从复制延迟导致的锁丢失。争议来自
+    Martin Kleppmann 与 antirez 的论战：进程 GC 停顿与时钟跳跃可能让双方对锁是否有效产生分歧，Redlock 依赖时钟假设。共识是分场景：效率优化场景可用；正确性保证场景要
+    fencing token——递增令牌加存储层校验拒绝旧令牌——或换 ZooKeeper 与 etcd。
+  points:
+  - 多数派 + 总耗时小于有效期
+  - 解决主从切换丢锁
+  - Martin 质疑时钟假设的安全性
+  - 正确性场景用 fencing token 或换 CP 系统
+- title: 主从复制的流程与 backlog 调优
+  content: 首次同步走 psync：主库 bgsave 生成 RDB 发送，期间新写命令进 replication backlog 缓冲，从库载入后再接收增量；之后主库持续传播写命令。断线重连时带
+    replication id 与 offset，offset 还在 backlog 环形缓冲里走增量同步，被刷掉则退化为全量。backlog 按断线时长乘写入速率估算，太小会引发全量同步风暴——RDB
+    重建加主库 COW 内存暴涨甚至 OOM。配套还有无盘复制与 min-replicas 防脑裂孤写。
+  points:
+  - 全量 RDB + backlog 增量缓冲
+  - 断线重连：offset 还在则增量
+  - backlog = 断线时长 × 写入速率
+  - 全量同步风暴是最危险链路
+- title: 哨兵的判定与故障转移
+  content: 哨兵承担监控、故障判定、自动转移与通知客户端四项职责。判定分两级：单个哨兵 ping 超时是主观下线，达到 quorum 个哨兵都认为下线才确认客观下线。转移时哨兵之间 Raft 式选举
+    leader 执行：从库中先过滤断连久的，再比优先级、比复制偏移量取数据最全者、最后比 runid 选出新主，其余从库执行 SLAVEOF 指向它，旧主恢复后降级为从库，客户端通过订阅 switch-master
+    事件拿到新地址。部署至少三个且为奇数防脑裂，客户端要连哨兵地址而非写死主库 IP。
+  points:
+  - SDOWN → ODOWN 需 quorum 确认
+  - Raft 式选 leader 执行转移
+  - 选新主：优先级 → offset → runid
+  - 至少 3 个奇数部署
+- title: Cluster 的哈希槽分片
+  content: Redis Cluster 把键空间划成 16384 个哈希槽，key 按 CRC16 取模落槽，槽分配给各主节点并支持在线迁移。槽位图随心跳传播，16384 的位图只有两 KB，且集群规模建议一千节点以内，再多浪费带宽。主从结构加
+    Gossip 协议去中心化通信，主挂了从库自动升主。客户端直连任意节点，key 不在本节点返回 MOVED 重定向，智能客户端缓存槽位映射直连正确节点，迁移期间用 ASK 临时重定向。多 key
+    操作要求同槽，用 hash tag 把相关 key 归到一起。
+  points:
+  - CRC16(key) 对 16384 取模落槽
+  - 16384 是心跳位图 2KB 的权衡
+  - MOVED / ASK 重定向
+  - hash tag 让多 key 同槽
+- title: Redis 事务、Lua 与 pipeline 的取舍
+  content: MULTI/EXEC 事务把命令入队后按序单线程执行，保证隔离性，但不支持回滚：入队报错整体不执行，运行时错误其余命令照常执行，也没有 undo。Lua 脚本整段作为单条命令原子执行，且能基于前一步结果做判断再操作，是事务做不到的能力，分布式锁解锁与限流都依赖它。pipeline
+    是客户端批量发送一次收齐，只省网络往返不保证原子性，适合批量导入与批量读取，注意几百到几千一批。三种手段的边界：要原子复合逻辑用 Lua，批量提交用事务，纯网络优化用 pipeline。
+  points:
+  - 事务无回滚、无 undo
+  - Lua 可判断可分支，原子执行
+  - pipeline 只省 RTT 非原子
+  - Lua 别太长以免阻塞
+- title: 大 key 与热 key 的治理
+  content: 大 key 指 value 过大或集合元素过多的 key，危害是删除与过期时阻塞单线程、网络拥塞、内存倾斜。发现用 redis-cli --bigkeys、RDB 离线分析与慢日志——多数慢命令根源就是大
+    key；处理上拆分、压缩 value、用 UNLINK 异步删除替代 DEL，超大 JSON 移回数据库。热 key 是单 key QPS 极高打满单个分片，用 --hotkeys 与客户端埋点发现，对策是本地缓存挡最热一层、key
+    加随机后缀复制多份分摊读、读写分离扩副本。
+  points:
+  - 大 key 阻塞单线程 + 内存倾斜
+  - UNLINK 惰性异步删除
+  - 慢日志与 --bigkeys/--hotkeys 定位
+  - 热 key 用本地缓存 + 多副本分摊
+- title: 布隆过滤器的原理与应用
+  content: 布隆过滤器用位数组加 k 个独立哈希函数：添加元素把 k 个位置置一，查询时全为一判可能存在、任一为零判一定不存在——有误判没有漏判，误判率由位数组大小、元素数与哈希数决定，百分之一误判约需每元素
+    9.6 bit，务必先预估容量再创建。只能加不能删，Counting 与 Cuckoo Filter 变体支持删除。实践上 Redis 4.0 后用 RedisBloom 模块，Java 侧有 Guava；典型应用是缓存穿透前置拦截、URL
+    去重、推荐已曝光去重。
+  points:
+  - 一定不存在 / 可能存在
+  - 误判率由 m、n、k 决定
+  - 不能删，Counting/Cuckoo 可补
+  - 穿透拦截与去重的标配
+- title: 排行榜、签到与延迟队列的实现
+  content: 排行榜用 ZSet：score 存分数，ZINCRBY 加分，ZREVRANGE 取 TopN，ZREVRANK 查名次，并列名次可分数乘大基数加时间戳排前。签到用 BitMap：SETBIT
+    按天置位，一月 31 bit，BITCOUNT 统计天数。延迟队列用 ZSet：score 存执行时间戳，消费端循环 ZRANGEBYSCORE 取到期任务，取到即删需 Lua 原子，再执行业务并配重试幂等。点赞与共同好友走
+    Set 交并，UV 走 HyperLogLog 估算，附近的人走 GEO。
+  points:
+  - ZSet 天然做排行榜
+  - BitMap 每月 31 bit 做签到
+  - 延迟队列：score 存到期时间
+  - 取任务即删须 Lua 原子
+- title: Redis 限流的方案选型
+  content: 固定窗口计数用 INCR 加首次 EXPIRE，实现最简但窗口边界有突刺，两倍流量可能在交界瞬间放行。滑动窗口用 ZSet 记录请求时间戳，清理窗口外再计数，平滑但内存随请求量涨。漏桶恒定速率放行强制整形，保护脆弱下游却无法利用突发容量；令牌桶按速率补令牌，允许突发且平均速率受控，是网关默认算法。所有方案必须用
+    Lua 把读判写三步原子化，否则单线程外的穿插就会超发；工程上常做本地限流加 Redis 全局限流的双层结构。
+  points:
+  - 固定窗口有边界突刺
+  - 滑动窗口平滑，令牌桶容忍突发
+  - 漏桶强制整形保护下游
+  - Lua 原子化是硬要求
+- title: 分布式 Session 的实现
+  content: 多实例部署后本地 Session 导致请求换节点即未登录，标准解是会话集中存 Redis：登录时 SET session 键为用户 JSON 并设 TTL，每次访问续期实现滑动过期；Cookie
+    只放 HttpOnly 的 sid，所有实例从 Redis 读取，服务无状态可水平扩展，Spring Session 一行接入。注意 Session 控制在几 KB 内，Redis 要哨兵或集群保高可用；踢人下线只需
+    DEL 键，这是相对 JWT 的核心优势；JWT 是无状态的另一路线，两者常混合使用。
+  points:
+  - 会话集中化 = 无状态水平扩展
+  - 滑动过期靠每次访问续期
+  - DEL 即踢人，优于 JWT 的可控性
+  - Redis 自身必须高可用
+- title: 秒杀扣库存的分层设计
+  content: 设计思路是 Redis 挡并发、MySQL 保最终正确。库存预热进 Redis，扣减用 Lua 完成取值、判断、递减三步，或直接 DECR 后判负回补，防超卖靠单线程原子性而不是先查后改。扣减成功发消息队列削峰，消费端落库用
+    UPDATE stock SET num=num-1 WHERE num>0 的条件更新兜底——数据库最后防线是 SQL 条件而不是应用判断。定期对账以库为准修正 Redis；消息失败重试配唯一业务单号幂等。整体是最终一致方案，宁可延迟不可超卖。
+  points:
+  - Lua 原子扣减挡并发
+  - MQ 削峰异步落库
+  - DB 条件更新是最后防线
+  - 对账以 DB 为准修 Redis
+- title: 内存告警的应急与治本
+  content: 内存打满先看成因：只加不删的缓存、忘设 TTL 的 key、大 key 堆积。应急是配 maxmemory 与合适淘汰策略让冷数据自动出局，临时用 UNLINK 清大 key、清理无
+    TTL 的 key。治本是全量 key 设 TTL 加随机抖动、精简编码如 hash 存对象替代序列化 JSON、小结构利用 listpack 自动编码，容量不够就 Cluster 加分片，历史明细移回数据库只留热点。监控
+    info memory 的碎片率，超 1.5 考虑开启 activedefrag。
+  points:
+  - 应急：maxmemory + 淘汰策略
+  - 全量 TTL + 随机抖动
+  - hash 编码省内存，listpack 自动化
+  - 碎片率超 1.5 开 activedefrag

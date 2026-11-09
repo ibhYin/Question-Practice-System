@@ -35,13 +35,101 @@ function fmtTime(iso) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-/* 满分答案轻量渲染：**加粗** 和 `代码`，其余按纯文本 */
-function renderAnswer(text) {
-  if (!text) return '';
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+/* 满分答案/文档轻量渲染 v2：结构化 Markdown（标题/列表/表格/代码块/加粗）+ Mermaid 图表 */
+function escHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function inlineMd(text) {
+  return escHtml(text)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+}
+function renderAnswer(text) {
+  if (!text) return '';
+  // 1. 拆出围栏代码块（```mermaid ... ``` 特殊处理，其余为代码块）
+  const parts = String(text).split(/```/);
+  let html = '';
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (i % 2 === 1) {
+      // 围栏块：首行是语言名
+      const nl = part.indexOf('\n');
+      const lang = (nl === -1 ? part : part.slice(0, nl)).trim().toLowerCase();
+      const body = nl === -1 ? '' : part.slice(nl + 1).replace(/\n$/, '');
+      if (lang === 'mermaid') {
+        html += `<div class="mermaid">${escHtml(body)}</div>`;
+      } else {
+        html += `<pre class="md-pre">${escHtml(body)}</pre>`;
+      }
+      continue;
+    }
+    // 2. 非代码段：逐行结构化
+    const lines = part.split('\n');
+    let out = '', listBuf = null, tableBuf = null, paraBuf = [];
+    const flushPara = () => {
+      if (paraBuf.length) { out += `<p>${inlineMd(paraBuf.join(' '))}</p>`; paraBuf = []; }
+    };
+    const flushList = () => { if (listBuf) { out += `<${listBuf.tag}>` + listBuf.items.map(x => `<li>${inlineMd(x)}</li>`).join('') + `</${listBuf.tag}>`; listBuf = null; } };
+    const flushTable = () => {
+      if (!tableBuf) return;
+      const rows = tableBuf;
+      if (rows.length >= 2) {
+        const head = rows[0];
+        const body = rows.slice(2);  // 跳过 |---|---| 分隔行
+        out += '<table class="md-table"><thead><tr>' + head.map(c => `<th>${inlineMd(c)}</th>`).join('') + '</tr></thead><tbody>'
+          + body.map(r => '<tr>' + head.map((_, i) => `<td>${inlineMd(r[i] || '')}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+      } else if (rows.length === 1) {
+        out += rows[0].map(c => inlineMd(c)).join(' ');
+      }
+      tableBuf = null;
+    };
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      const t = line.trim();
+      // 表格行
+      if (/^\|.*\|/.test(t)) {
+        flushPara(); flushList();
+        const cells = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+        const isSep = cells.every(c => /^:?-{2,}:?$/.test(c));
+        if (tableBuf && isSep) continue;  // 分隔行
+        tableBuf = tableBuf || [];
+        tableBuf.push(cells);
+        continue;
+      }
+      flushTable();
+      // 标题
+      const h = t.match(/^(#{1,4})\s+(.*)/);
+      if (h) { flushPara(); flushList(); out += `<h4 class="md-h${h[1].length}">${inlineMd(h[2])}</h4>`; continue; }
+      // 无序列表
+      const ul = t.match(/^[-*]\s+(.*)/);
+      if (ul) { flushPara(); if (!listBuf || listBuf.tag !== 'ul') { flushList(); listBuf = { tag: 'ul', items: [] }; } listBuf.items.push(ul[1]); continue; }
+      // 有序列表
+      const ol = t.match(/^\d+[.、)]\s+(.*)/);
+      if (ol) { flushPara(); if (!listBuf || listBuf.tag !== 'ol') { flushList(); listBuf = { tag: 'ol', items: [] }; } listBuf.items.push(ol[1]); continue; }
+      // 空行
+      if (!t) { flushPara(); flushList(); continue; }
+      // 引用
+      const quote = t.match(/^>\s?(.*)/);
+      if (quote) { flushPara(); flushList(); out += `<blockquote class="md-quote">${inlineMd(quote[1])}</blockquote>`; continue; }
+      // 普通文本（连续行为一段）
+      paraBuf.push(t);
+    }
+    flushPara(); flushList(); flushTable();
+    html += out;
+  }
+  return html;
+}
+/* v-html 更新后激活页面内的 mermaid 图（未加载/失败时降级为代码块样式） */
+function enhanceDiagrams() {
+  if (typeof mermaid === 'undefined') return;
+  const nodes = document.querySelectorAll('.main .mermaid');
+  if (!nodes.length) return;
+  try {
+    mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'strict' });
+    mermaid.run({ nodes: [...nodes] }).catch(() => {
+      nodes.forEach(n => n.classList.add('mermaid-error'));
+    });
+  } catch (e) { /* 降级：保持源码展示 */ }
 }
 function scoreClass(s) {
   if (s == null) return '';
@@ -199,6 +287,7 @@ const InterviewView = {
         state.phase = 'result';
         if (r.scoring) pollScore();   // 异步评分：立即展示对比，分数轮询补显
         loadKnowledge(r.question_id); // 后台拉关联考点，不阻塞展示
+        nextTick(enhanceDiagrams);
       } catch (e) { state.error = e.message; }
       state.submitting = false;
     }
@@ -515,6 +604,7 @@ const MapView = {
       try {
         const p = await api('/analysis/knowledge-pack', { method: 'POST', body: { tag: state.panel.tag } });
         state.panel = { ...state.panel, knowledge_pack: { content: p.content }, variant_questions: p.variant_questions || [] };
+        nextTick(enhanceDiagrams);
       } catch (e) { state.error = e.message; }
       state.packLoading = false;
     }
@@ -710,6 +800,7 @@ const StudyView = {
         if (state.doc) state.doc = await api(`/study/docs/${state.doc.id}`);
         state.idx = 0; state.flipped = false;
         loadOverview();
+        nextTick(enhanceDiagrams);
       } catch (e) { state.error = e.message; }
       state.loading = false;
     }
@@ -731,7 +822,7 @@ const StudyView = {
       } catch (e) { state.error = e.message; }
     }
 
-    async function openDoc(d) { state.doc = await api(`/study/docs/${d.id}`); }
+    async function openDoc(d) { state.doc = await api(`/study/docs/${d.id}`); nextTick(enhanceDiagrams); }
 
     const card = computed(() => state.cards[state.idx] || null);
     onMounted(loadCategory);
@@ -832,6 +923,7 @@ const SessionsView = {
           if (r.cards.length) state.cardMap[a.question_id] = r.cards;
         } catch (e) { /* 忽略 */ }
       }));
+      nextTick(enhanceDiagrams);
     }
     function back() { state.detail = null; }
     function exportMd() { window.open('/api/interviews/' + state.detail.id + '/export'); }

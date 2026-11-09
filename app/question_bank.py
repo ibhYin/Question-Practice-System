@@ -2,6 +2,8 @@
 
 import random
 import re
+import time
+from math import ceil
 
 from sqlalchemy.orm import Session as DBSession
 
@@ -121,11 +123,38 @@ def _category_pool(db: DBSession, category: str) -> list[Question]:
     return qs
 
 
-def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Question]:
-    """按类别权重抽题：答错过的题优先重现，其次含薄弱知识点的未做题，最后随机旧题"""
-    import json as _json
+SERVE_RECENT_KEY = "serve:recent"  # ZSET: member=题id, score=上次出题时间戳
+RECENT_COOLDOWN_SEC = 72 * 3600   # 72h 内出过的题在同桶内沉底
 
-    from .redis_client import rdb as _rdb
+
+def _split_recent(items: list[Question]) -> tuple[list[Question], list[Question]]:
+    """按冷却窗口切分：返回（新鲜题，冷却题）。冷却=72h 内出过。"""
+    # 注意：zset member 存储后读回是 str，统一转 int 再比对（int/str 混用会让冷却永远失效）
+    recent = {
+        int(m)
+        for m in rdb.zrangebyscore(
+            SERVE_RECENT_KEY, f"({time.time() - RECENT_COOLDOWN_SEC}", "+inf"
+        )
+    } if rdb.exists(SERVE_RECENT_KEY) else set()
+    if not recent:
+        fresh = list(items)
+        random.shuffle(fresh)
+        return fresh, []
+    fresh = [q for q in items if q.id not in recent]
+    stale = [q for q in items if q.id in recent]
+    random.shuffle(fresh)
+    random.shuffle(stale)
+    return fresh, stale
+
+
+def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Question]:
+    """按类别权重抽题，保证多样性：
+    - 错题限流：每场最多占一半名额（结构化重现由错题本遗忘曲线负责），错题内部随机
+    - 未做题按弱 tag 命中分组，组内洗牌（弱项优先，但同分不再按 id 序死板命中）
+    - 72h 冷却：近期出过的题直接跳过，池不足时才回补（这是消灭"总是那几道题"的关键）
+    - 做对过的题洗牌垫底
+    """
+    import json as _json
 
     alloc = allocate(weights, count)
 
@@ -139,7 +168,7 @@ def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Q
 
     # 薄弱知识点集合（tag 级，驱动"换汤不换药"迁移：弱 tag 的题即使没直接答错也优先）
     weak_tags: set[str] = set()
-    cached = _rdb.get("weakness:cache")
+    cached = rdb.get("weakness:cache")
     if cached:
         try:
             data = _json.loads(cached)
@@ -147,22 +176,51 @@ def pick_questions(db: DBSession, weights: dict[str, int], count: int) -> list[Q
         except ValueError:
             pass
 
-    def weak_score(q: Question) -> int:
-        """题目命中的薄弱知识点数（排序权重）"""
+    def hits(q: Question) -> int:
         return sum(1 for t in q.tags or [] if t in weak_tags)
+
+    def weak_groups(items: list[Question]) -> list[Question]:
+        """按弱 tag 命中数分组（2+/1/0），组内洗牌后拼接"""
+        buckets: dict[int, list[Question]] = {2: [], 1: [], 0: []}
+        for q in items:
+            buckets[2 if hits(q) >= 2 else (1 if hits(q) >= 1 else 0)].append(q)
+        out: list[Question] = []
+        for k in (2, 1, 0):
+            out.extend(buckets[k])
+        return out
 
     picked: list[Question] = []
     for cat, n in alloc.items():
+        take = min(n, count - len(picked))
+        if take <= 0:
+            break
         pool = _category_pool(db, cat)
         if not pool:
             continue
         wrong = [q for q in pool if q.id in wrong_ids]
-        # 错题按"错得最频繁"排序（Redis ZSET 高频错题榜）
-        wrong.sort(key=lambda q: -(rdb.zscore("question:hot", str(q.id)) or 0))
         unseen = [q for q in pool if q.id not in seen_ids]
-        # 弱点迁移：含弱 tag 的未做题置顶（按命中弱 tag 数降序）
-        unseen.sort(key=weak_score, reverse=True)
         seen = [q for q in pool if q.id in seen_ids and q.id not in wrong_ids]
-        random.shuffle(seen)
-        picked.extend((wrong + unseen + seen)[:n])
+
+        wrong_f, wrong_s = _split_recent(wrong)
+        unseen_f, unseen_s = _split_recent(unseen)
+        seen_f, seen_s = _split_recent(seen)
+
+        # 错题限流：每场错题最多占该类配额的一半（配额≥2 时）
+        wrong_take = min(len(wrong_f), ceil(take / 2)) if take >= 2 else min(len(wrong_f), take)
+        picked.extend(wrong_f[:wrong_take])
+        take -= wrong_take
+        if take <= 0:
+            continue
+        # 新题（弱项分组优先）
+        fill = weak_groups(unseen_f)[:take]
+        picked.extend(fill)
+        take -= len(fill)
+        if take > 0:
+            picked.extend(seen_f[:take])
+        take -= len(seen_f[:take])
+        if take <= 0:
+            continue
+        # 新鲜题不够了：冷却题按 错题→新题→旧题 回补
+        refill = (wrong_s + unseen_f + unseen_s + seen_s)[:take]
+        picked.extend(refill)
     return picked

@@ -50,7 +50,8 @@ def main() -> None:
                     )
                     docs_added += 1
                 else:
-                    skipped += 1
+                    # 文档按 title 覆盖更新（图表/内容迭代后重跑导入即可刷新）
+                    exists.content = str(doc.get("content", "")).strip()
 
             for card in data.get("cards") or []:
                 title = str(card.get("title", "")).strip()

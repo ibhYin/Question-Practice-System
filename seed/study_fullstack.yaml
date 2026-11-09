@@ -1,166 +1,218 @@
 category: FULLSTACK
 doc:
-  title: "全栈开发知识体系全景"
-  content: |
-    全栈知识体系可以切成四块：接口与认证、浏览器与安全、前端框架原理、工程化与部署。
-
-    接口层先定契约。前后端分离让后端只提供 JSON API、前端独立工程取数渲染，代价是首屏白屏、SEO 与跨域，选型按业务形态：内容型站点考虑 SSR 或模板渲染，后台工具类应用纯分离最舒服。RESTful 用名词复数的 URL 表达资源、HTTP 方法表达操作、状态码语义化，拒绝 200 包错误码的反模式。多端场景下 BFF 在网关之后做聚合裁剪，让接口形状贴合页面需求；API 网关则收口路由、鉴权、限流这些与业务无关的横切职责。
-
-    认证授权是全栈的核心横切面。Session-Cookie 状态在服务端，可踢人可改会话，分布式要靠 Redis 集中存储；JWT 状态在客户端，天然水平扩展，但签发后无法主动作废。工程正解是短命 access token 加可吊销的 refresh token。第三方登录走 OAuth2 授权码模式，code 换 token 在服务端完成，公开客户端配 PKCE 防授权码劫持；集团内多系统用 SSO 收敛认证域。权限模型用 RBAC：用户、角色、权限三表加两张关联表，后端接口鉴权才是安全边界，数据权限靠 SQL 注入过滤条件。
-
-    浏览器与安全围绕同源策略展开：跨域用 CORS，非简单请求先发 OPTIONS 预检，携带 Cookie 时必须精确指定源；XSS 靠输出转义加 CSP 加 HttpOnly 分层防御；CSRF 利用 Cookie 自动携带的特性借刀杀人，用 SameSite 与 CSRF Token 化解，token 方案天然免疫。
-
-    前端原理三件事：渲染管线从 DOM、CSSOM 到渲染树、布局、绘制、合成，回流必然重绘而重绘不一定回流；虚拟 DOM 用同层 diff 和稳定 key 把 DOM 操作收敛为最小变更集；Vue 靠 Proxy 依赖追踪实现细粒度更新，React 靠整树重渲染加 Fiber 调度，状态管理先分类再选型，服务端状态交给 React Query 类方案而不是塞进全局 store。
-
-    工程化最后收口：HTTP 缓存用带 hash 资源长缓存加 index.html no-cache 的组合；部署链路 CDN 加 Nginx，try_files 支持 SPA 路由，upstream 做负载均衡与 TLS 终结；CI/CD 把 lint、test、build、灰度发布、一键回滚串成流水线，部署不等于发布；监控上 Sentry 加 sourceMap 还原压缩堆栈，新指纹出现即时告警；性能优化先测 LCP、INP、CLS 再动手，先吃缓存与压缩的免费午餐再动架构。
+  title: 全栈开发知识体系全景
+  content: "全栈知识体系可以切成四块：接口与认证、浏览器与安全、前端框架原理、工程化与部署。\n\n接口层先定契约。前后端分离让后端只提供 JSON API、前端独立工程取数渲染，代价是首屏白屏、SEO\
+    \ 与跨域，选型按业务形态：内容型站点考虑 SSR 或模板渲染，后台工具类应用纯分离最舒服。RESTful 用名词复数的 URL 表达资源、HTTP 方法表达操作、状态码语义化，拒绝 200 包错误码的反模式。多端场景下\
+    \ BFF 在网关之后做聚合裁剪，让接口形状贴合页面需求；API 网关则收口路由、鉴权、限流这些与业务无关的横切职责。\n\n认证授权是全栈的核心横切面。Session-Cookie 状态在服务端，可踢人可改会话，分布式要靠\
+    \ Redis 集中存储；JWT 状态在客户端，天然水平扩展，但签发后无法主动作废。工程正解是短命 access token 加可吊销的 refresh token。第三方登录走 OAuth2 授权码模式，code\
+    \ 换 token 在服务端完成，公开客户端配 PKCE 防授权码劫持；集团内多系统用 SSO 收敛认证域。权限模型用 RBAC：用户、角色、权限三表加两张关联表，后端接口鉴权才是安全边界，数据权限靠\
+    \ SQL 注入过滤条件。\n\n浏览器与安全围绕同源策略展开：跨域用 CORS，非简单请求先发 OPTIONS 预检，携带 Cookie 时必须精确指定源；XSS 靠输出转义加 CSP 加 HttpOnly\
+    \ 分层防御；CSRF 利用 Cookie 自动携带的特性借刀杀人，用 SameSite 与 CSRF Token 化解，token 方案天然免疫。\n\n前端原理三件事：渲染管线从 DOM、CSSOM\
+    \ 到渲染树、布局、绘制、合成，回流必然重绘而重绘不一定回流；虚拟 DOM 用同层 diff 和稳定 key 把 DOM 操作收敛为最小变更集；Vue 靠 Proxy 依赖追踪实现细粒度更新，React\
+    \ 靠整树重渲染加 Fiber 调度，状态管理先分类再选型，服务端状态交给 React Query 类方案而不是塞进全局 store。\n\n工程化最后收口：HTTP 缓存用带 hash 资源长缓存加\
+    \ index.html no-cache 的组合；部署链路 CDN 加 Nginx，try_files 支持 SPA 路由，upstream 做负载均衡与 TLS 终结；CI/CD 把 lint、test、build、灰度发布、一键回滚串成流水线，部署不等于发布；监控上\
+    \ Sentry 加 sourceMap 还原压缩堆栈，新指纹出现即时告警；性能优化先测 LCP、INP、CLS 再动手，先吃缓存与压缩的免费午餐再动架构。\n\n# \U0001F4CC 知识速览图\n\
+    \n把上面正文的零散知识串成一张张图——先自己复述，再对照图检验。\n\n### JWT 认证时序\n\n```mermaid\nsequenceDiagram\n    participant\
+    \ U as 客户端\n    participant S as 服务端\n    U->>S: 登录（账号密码）\n    S->>U: 签发 access(短期) + refresh(长期)\n\
+    \    Note over U: 本地保存 token\n    U->>S: 请求带 Authorization: Bearer\n    S->>S: 验签 + 查过期（无状态校验）\n \
+    \   S->>U: 返回数据\n    Note over U,S: access 过期 → refresh 换发新 access\n    Note over U,S: 登出 = 吊销 refresh（存库可控制）\n\
+    ```\n"
 cards:
-  - title: "前后端分离与模板渲染的取舍"
-    content: "模板渲染由服务端把数据填进 HTML 直接返回，首屏快、SEO 天然友好，但前后端耦合、重交互页面整页刷新体验差。前后端分离让后端只出 JSON API，前端独立工程渲染，职责清晰、可并行开发、一套 API 服务多端，代价是首屏白屏需要 SSR 优化、SEO 要额外处理、跨域要配 CORS、鉴权从 Cookie 变成 Token。选型：内容型网站重 SEO 考虑 SSR 或模板，后台管理系统纯分离最舒服；多端场景加 BFF 聚合适配层。"
-    points:
-      - "模板渲染首屏快、SEO 天然好"
-      - "分离职责清晰，一套 API 服务多端"
-      - "内容型选 SSR 或模板，工具型纯分离"
-  - title: "RESTful API 的核心设计规范"
-    content: "RESTful 的核心是资源与语义：URL 用名词复数表达资源如 /users/42/orders，HTTP 方法表达操作——GET 读、POST 建、PUT 全量改、PATCH 部分改、DELETE 删，避免动词进 URL；版本放 URI 或 Header，层级表达从属最深两层。状态码语义化是硬要求：201 已创建、400 参数错、401 未认证、403 无权限、429 限流，200 包错误码是反模式，会让网关与监控全瞎。分页排序过滤用查询参数，错误响应统一结构并带 traceId 便于排查。"
-    points:
-      - "名词复数表资源，方法表操作"
-      - "拒绝 200 包错误码的反模式"
-      - "分页过滤走查询参数，错误带 traceId"
-  - title: "JWT 与 Session-Cookie 的本质差异"
-    content: "Session-Cookie 把状态放在服务端：登录后存会话、下发 session_id 到 Cookie，可主动踢人、会话数据可变，但分布式必须集中存储到 Redis，跨端不便且要防 CSRF。JWT 把状态放在客户端：签名保证不可篡改，服务端不存会话天然水平扩展、跨端通用，但签发后无法主动作废，登出踢人要等自然过期，Payload 只是 Base64 编码不是加密，不能放敏感数据。本质区别是有状态与无状态的取舍，JWT 的不可作废是设计取舍不是缺陷。"
-    points:
-      - "Session 状态在服务端，JWT 在客户端"
-      - "JWT 无状态易扩展但无法主动作废"
-      - "Payload 只是编码不是加密"
-  - title: "短 access token 与 refresh token 的混合方案"
-    content: "工程正解是双 token 混合：短命 access token 15 分钟到 2 小时，无状态验证扛日常请求；长命 refresh token 存数据库或 Redis 可吊销，只用于换发新 access token。这样兼得无状态验证的性能与可控吊销的安全——踢人下线只需删除 refresh token，最多等 access token 自然过期。端上的选择：小程序与 App 用 token 放请求头；同域 Web 用 Cookie 配 SameSite 防 CSRF 更省心。refresh token 要做轮换，一次使用后立即作废换新。"
-    points:
-      - "短 token 无状态验证，长 token 可吊销"
-      - "踢人删 refresh token 即可"
-      - "refresh token 轮换防重放"
-  - title: "OAuth2 授权码模式的四步流程"
-    content: "授权码模式四步：第一步跳转授权页，带 client_id、redirect_uri、scope、state 随机串防 CSRF；第二步用户同意后重定向回 redirect_uri 并附一次性 code；第三步后端拿 code 加 client_secret 换 access_token，这一步在服务端完成，密钥不暴露给前端；第四步用 access_token 调资源 API 完成登录。绕一道 code 的意义在于 token 不经过浏览器 URL，且换 token 需要服务端持有的密钥，防中间人与令牌泄露。"
-    points:
-      - "state 随机串防 CSRF"
-      - "code 一次性，换 token 在服务端"
-      - "密钥不进前端，token 不过浏览器"
-  - title: "PKCE 解决公开客户端的授权码劫持"
-    content: "公开客户端（前端 SPA、移动端）没有 client_secret 可存，授权码可能被恶意应用截获。PKCE 的解法：客户端先生成随机 code_verifier，其哈希 code_challenge 随授权请求发出，换 token 时必须出示原始 verifier——截获 code 的人没有 verifier 依然换不到 token。现在 GitHub 与 Google 对前端应用都推荐或强制 PKCE。概念辨析：OAuth2 是授权框架不是认证协议，OIDC 在其上加 id_token 才是认证标准，用 GitHub 登录严格说是 OIDC。"
-    points:
-      - "verifier 的哈希先行，原值换 token"
-      - "截获 code 无 verifier 换不到 token"
-      - "OIDC 加 id_token 才是认证"
-  - title: "SSO 单点登录的两种实现路线"
-    content: "单点登录的本质是把认证域收敛到一处，各系统用安全方式换取本地会话。CAS 路线适合同父域的企业内网：访问系统 A 未登录重定向到认证中心，登录后种下全局 Cookie TGC 并发一次性 ticket 回 A，A 用 ticket 验证后建立本地会话；访问系统 B 时 TGC 还在直接发票据，用户无感；登出时通知各子系统销毁会话。Token/OIDC 路线适合跨域与 App：认证中心即 IdP，各系统持有自己的 access token，登出靠过期与前端清理。票据要一次性、短有效期、走 HTTPS。"
-    points:
-      - "CAS 靠全局 Cookie 加一次性票据"
-      - "Token 路线适合跨域与多端"
-      - "登出一致性是两方案的共同难点"
-  - title: "CORS 的简单请求与预检请求"
-    content: "同源策略禁止页面读取跨源响应，CORS 让服务端声明允许的源。简单请求（GET、POST 加安全头部）浏览器直接发送带 Origin 头，服务端返回 Access-Control-Allow-Origin 匹配则放行；非简单请求（带 Authorization、JSON 类型、PUT、DELETE）先触发预检：浏览器发 OPTIONS 询问允许的源、方法与头部，通过后才发真实请求。预检是浏览器行为，curl 与服务端调用没有预检。注意请求其实已到达服务端，被拦截的是浏览器不给 JS 看响应。"
-    points:
-      - "简单请求直接发，非简单先 OPTIONS 预检"
-      - "预检只存在于浏览器环境"
-      - "拦截的是响应读取而非请求本身"
-  - title: "CORS 配置的常见坑"
-    content: "配置 CORS 的要点：携带 Cookie 时 Access-Control-Allow-Origin 不能是通配符，必须精确指定源并返回 Allow-Credentials 为 true；Allow-Headers 要包含前端实际发送的 Authorization 与 Content-Type；Max-Age 设长一些减少预检；绝不能反射任意 Origin。常见坑：Nginx 与后端都配 CORS 导致响应头重复报错；OPTIONS 预检被鉴权拦截返回 401，预检必须放行。替代方案是开发期 Vite 代理、生产 Nginx 反代同域部署。"
-    points:
-      - "带 Cookie 必须精确源加 Credentials"
-      - "OPTIONS 预检不能被鉴权拦截"
-      - "代理与后端重复配置会头重复"
-  - title: "XSS 的三类攻击与分层防御"
-    content: "XSS 是把恶意脚本注入页面在其他用户浏览器执行，分三类：存储型存进数据库每个访问者都执行危害最大；反射型藏在 URL 参数被服务端拼进响应；DOM 型纯前端把不可信数据写进 innerHTML。防御分层：输入校验加按上下文输出转义（HTML 实体、JS 字符串、URL 编码规则各不同）；框架插值默认转义，禁止 v-html 直插富文本，必须过 DOMPurify 白名单；CSP 限制脚本来源让内联注入无法执行，是最后防线；Cookie 加 HttpOnly 防窃取、Secure、SameSite。"
-    points:
-      - "存储型危害最大，DOM 型不发服务端"
-      - "输出转义按上下文选规则"
-      - "CSP 是最后防线不是转义的替代"
-  - title: "CSRF 的原理与防御手段"
-    content: "CSRF 利用浏览器向某站点发请求自动带 Cookie 的特性：用户登录着银行站点时访问恶意网页，其中的 img 或自动表单借用户之手发出带登录态的请求。与 XSS 的区别：XSS 在目标站点执行脚本能干一切，CSRF 不执行脚本只冒用身份发请求。防御：CSRF Token 服务端下发随机串提交必须携带；SameSite 设为 Lax 或 Strict 限制跨站携带 Cookie；校验 Origin 与 Referer；用 Authorization Header 的 token 方案天然免疫 CSRF。"
-    points:
-      - "借 Cookie 自动携带冒用身份"
-      - "XSS 执行脚本，CSRF 只发请求"
-      - "SameSite 加 CSRF Token 双保险"
-  - title: "浏览器渲染关键路径"
-    content: "浏览器渲染管线六步：HTML 增量解析成 DOM 树；CSS 解析成 CSSOM；两者合并成渲染树剔除 display 为 none 的节点；Layout 回流计算几何位置；Paint 重绘像素；Composite 合成图层上屏。JS 的特殊性：script 默认阻塞 DOM 解析，async 下载完乱序执行，defer 解析完按序执行。性能抓手对应管线：关键 CSS 内联、CSS 放头 JS 加 defer、批量改样式、用 transform 代替 top 和 left 走合成器线程、虚拟列表减节点、图片懒加载。回流必然重绘，重绘不一定回流。"
-    points:
-      - "DOM 加 CSSOM 合成渲染树"
-      - "回流、重绘、合成依次进行"
-      - "transform 与 opacity 不经主线程"
-  - title: "虚拟 DOM 与 diff 的关键优化"
-    content: "虚拟 DOM 用 JS 对象描述真实 DOM 树，数据变化时生成新树，新旧 diff 找最小变更集再一次性 patch——把昂贵的 DOM 操作收敛为对比加批量更新。diff 的关键优化：只做同层级对比把树对比降到 O(n)；节点类型不同直接销毁重建不深比；列表用稳定唯一的业务 id 作 key，能识别移动与增删并复用节点，用 index 当 key 在增删排序时会错位复用导致输入框串内容的经典 bug；React.memo 与 Vue 响应式依赖收集做组件级短路跳过子树 diff。"
-    points:
-      - "同层对比把树 diff 降到 O(n)"
-      - "类型不同直接重建不深比"
-      - "key 用业务 id，index 会错位复用"
-  - title: "Vue 与 React 响应式原理的差异"
-    content: "Vue3 是推模型：渲染函数读取数据时被 Proxy 的 getter 拦截，把当前渲染副作用登记为依赖；数据变更时精确通知对应 effect 重跑——改谁更新谁，配合编译期 patch flag 粒度极细，直接改属性即可触发更新。React 是拉模型：setState 只标记组件脏了，调度器从该组件起整棵子树重新渲染，不知道哪份数据变了，所以需要手动 memo、useMemo、useCallback 跳过，且必须不可变更新。Fiber 把渲染拆成可中断单元支持并发调度。"
-    points:
-      - "Vue Proxy 依赖追踪精确更新"
-      - "React 整树重渲染，优化靠 memo"
-      - "Vue 直接改，React 不可变更新"
-  - title: "前端状态管理的分类选型"
-    content: "先给状态分类再选工具：表单输入、弹窗开关是组件本地状态用 ref 或 useState；登录用户、主题、跨页筛选才是全局状态；接口数据属于服务端状态交给 React Query、SWR 类方案管理缓存与失效，别手塞进全局 store；页码、tab、搜索词放 URL 可分享可回退。方案上 Vue 用官方 Pinia，React 轻量选 Zustand、Jotai，大型团队规范用 Redux Toolkit；Context 只解决传递不解决性能，高频更新别拿它当状态管理。原则是状态放得越近越好，全局只放应用级状态。"
-    points:
-      - "先分类：本地、全局、服务端、URL 四类"
-      - "服务端状态交给 React Query 类方案"
-      - "Context 不解决性能问题"
-  - title: "HTTP 强缓存与协商缓存"
-    content: "强缓存不发请求：Cache-Control 的 max-age 未过期时浏览器直接用本地缓存；no-cache 是可缓存但每次协商，no-store 才是彻底不存。协商缓存发请求验证：Last-Modified 秒级精度有误判可能，ETag 按内容哈希优先级更高，未变返回 304。经典组合拳：带内容哈希的静态资源设 public 加 max-age 一年加 immutable，文件名变即缓存失效；index.html 设 no-cache 保证第一时间拿到新版本引用；API 按数据特性决定策略。"
-    points:
-      - "强缓存不发请求，协商缓存 304 验证"
-      - "ETag 优先级高于 Last-Modified"
-      - "hash 资源长缓存，html 用 no-cache"
-  - title: "WebSocket、SSE 与轮询的选型"
-    content: "实时通信按交互方向选型：短轮询定时请求实现最简但空查询多；长轮询服务端 hold 住请求延迟更低但 HTTP 开销大。SSE 是 HTTP 长连接上的服务器单向推送，EventSource 自动重连，天然过网关代理，是 LLM 流式输出、通知、行情这类单向场景的最优解。WebSocket 是独立协议的双向全双工连接，帧开销小，适合聊天、协同编辑、实时交易，代价是断线重连心跳要自己做、Nginx 要配 Upgrade、鉴权麻烦。口诀：单向推送用 SSE，双向互动用 WS，低频变更轮询足够。"
-    points:
-      - "SSE 单向推送，简单可靠过网关"
-      - "WebSocket 双向全双工但运维成本高"
-      - "别用 WebSocket 做只需 SSE 的事"
-  - title: "Node.js 事件循环与 CPU 密集困境"
-    content: "Node 是单线程 JS 执行加 libuv 事件循环加线程池的结构，IO 交给底层异步，一个线程服务成千上万连接。循环六阶段：timers 处理到期定时器，pending callbacks 处理系统回调，poll 取 IO 事件执行回调是时间大头，check 执行 setImmediate，close 处理关闭回调，阶段间清空 Promise 微任务队列。它不适合 CPU 密集：一个 100 毫秒的同步计算会让事件循环停摆、所有请求阻塞，应对是 worker_threads、子进程或下沉到独立服务。"
-    points:
-      - "六阶段循环，阶段间清空微任务"
-      - "单线程高并发靠 IO 异步而非计算"
-      - "CPU 密集用 worker_threads 化解"
-  - title: "Nginx 在前端部署中的职责"
-    content: "部署链路：CI 构建带 hash 产物、CDN 加速、Nginx 入口。Nginx 的职责清单：静态托管 root 指向 dist，try_files 支持 SPA 的 history 路由刷新不 404，gzip 压缩，带 hash 资源长缓存、index.html 设 no-cache；反向代理把 /api 转发到后端集群，统一入口顺带解决跨域；upstream 负载均衡配合健康检查摘除故障节点；TLS 终结、HTTP/2、limit_req 限流。发布用版本目录软链原子切换秒级回滚，只开 80 与 443。"
-    points:
-      - "try_files 支撑 SPA history 路由"
-      - "反代统一入口并解决跨域"
-      - "软链原子切换，回滚看速度"
-  - title: "CI/CD 流水线与发布策略"
-    content: "CI 每次推送触发：lint、类型检查、单测加覆盖率卡点，构建产物带 hash，后端多阶段构建镜像并用 git sha 打 tag，并行加速且失败即阻断合并。CD 分环境推进：合并到 main 自动部署测试环境跑冒烟与 e2e；生产发布走手动审批、灰度放量、观察错误率与延迟指标、全量，任何异常一键回滚。数据库变更单独管理，migration 先行且向后兼容，两段式发布先加列后删列。原则：流水线越快越好，一切变更走流水线，部署不等于发布——发布是流量切换，要能随时回。"
-    points:
-      - "CI 卡点 lint、test、build 并行"
-      - "生产灰度放量，指标异常即回滚"
-      - "部署不等于发布，回滚要分钟级"
-  - title: "RBAC 权限模型设计"
-    content: "RBAC 的核心是五张表：user、role、permission 加 user_role、role_permission 两张关联表，授权给角色而非个人，换人只换角色绑定。功能权限在后端每个接口标注所需权限做校验，前端隐藏按钮只是体验优化，后端校验才是安全边界；前端用路由守卫与按钮级权限指令，权限码由接口下发避免写死。数据权限在 SQL 层注入过滤条件——部门隔离、上下级可见、仅本人，数据范围作为角色属性配置化。进阶点：权限缓存与失效、多租户强制过滤、审计日志。第一原则是默认拒绝，显式授予。"
-    points:
-      - "五张表结构，授权给角色而非个人"
-      - "后端校验是安全边界，前端只是体验"
-      - "数据权限靠 SQL 层注入过滤条件"
-  - title: "BFF 与 API 网关的分工"
-    content: "API 网关是系统边界统一入口：路由转发、统一鉴权、限流熔断、日志审计、TLS 终结、灰度分流，特点是不关心业务，横切面的事全收，实现有 Nginx、Kong、APISIX、Spring Cloud Gateway。BFF 是为前端服务的聚合层：一个页面要的数据散在多个微服务，BFF 聚合成页面需要的形状一次返回，每端一个 BFF 各自裁剪字段，含业务编排逻辑——这是与网关的本质区别。类比：网关是小区保安，BFF 是各家的管家。小项目不必上 BFF；BFF 归前端团队维护是主流，注意业务逻辑腐化风险。"
-    points:
-      - "网关管横切面，不关心业务"
-      - "BFF 聚合裁剪，贴页面形状"
-      - "BFF 归前端维护，防逻辑腐化"
-  - title: "前端错误监控与 sourceMap 链路"
-    content: "前端监控覆盖 JS 错误、资源加载失败、接口错误率、白屏与 web-vitals。Sentry 提供错误聚合指纹去重、release 版本标记、面包屑回放。sourceMap 链路是关键：生产构建产出 .map 不上传 CDN 防源码泄露，构建后用 sentry-cli 上传，Sentry 把压缩堆栈还原为源码行号，release 必须与 sourcemap 严格对齐否则还原错乱。告警闭环：新指纹首次出现即时通知，发版后一小时错误率对比回归。坑：跨域脚本报 Script error 需加 crossorigin 与 CORS 头。"
-    points:
-      - "map 文件只传 Sentry 不上 CDN"
-      - "release 与 sourcemap 严格对齐"
-      - "新指纹告警加发版错误率对比"
-  - title: "SSR、SSG、ISR 与水合机制"
-    content: "SSR 每请求服务端渲染 HTML 直出，首屏快 SEO 好，服务端有计算成本；SSG 构建时预渲染全部静态页，CDN 分发最快，适合内容固定的官网文档；ISR 是静态页加后台按 TTL 重新生成，静态速度加准实时内容，电商商品页利器。水合是 SSR 的必经环节：HTML 是死的，客户端 JS 重建组件树并绑定事件后页面才可交互，要求客户端与服务端渲染结果一致，Date.now、随机数、window 判断都会造成 hydration mismatch。演进方向是流式 SSR、选择性水合、岛屿架构。"
-    points:
-      - "SSG 最快，ISR 兼顾实时性"
-      - "水合后页面才可交互"
-      - "服务端客户端渲染不一致即 mismatch"
-  - title: "首屏性能优化的排查与分层手段"
-    content: "先定指标再优化：LCP 评估最大内容渲染、INP 评估交互响应、CLS 评估布局偏移，用 Lighthouse 与真实用户监控建立基线。排查路径：网络瀑布看 TTFB 与资源加载，bundle 分析看包构成，渲染路径看关键 CSS 与阻塞脚本。手段分层：网络层 CDN 加 HTTP/2 加压缩加图片 WebP 懒加载；资源层路由级代码分割、Tree-shaking、大依赖动态加载、critical CSS 内联；渲染层 SSR 骨架屏虚拟列表。原则：先吃缓存与压缩的免费午餐再动架构，没有数据的优化是玄学，CI 设体积预算卡点。"
-    points:
-      - "LCP、INP、CLS 三大核心指标"
-      - "先缓存压缩后架构，数据驱动"
-      - "路由分割加关键 CSS 内联"
+- title: 前后端分离与模板渲染的取舍
+  content: 模板渲染由服务端把数据填进 HTML 直接返回，首屏快、SEO 天然友好，但前后端耦合、重交互页面整页刷新体验差。前后端分离让后端只出 JSON API，前端独立工程渲染，职责清晰、可并行开发、一套
+    API 服务多端，代价是首屏白屏需要 SSR 优化、SEO 要额外处理、跨域要配 CORS、鉴权从 Cookie 变成 Token。选型：内容型网站重 SEO 考虑 SSR 或模板，后台管理系统纯分离最舒服；多端场景加
+    BFF 聚合适配层。
+  points:
+  - 模板渲染首屏快、SEO 天然好
+  - 分离职责清晰，一套 API 服务多端
+  - 内容型选 SSR 或模板，工具型纯分离
+- title: RESTful API 的核心设计规范
+  content: RESTful 的核心是资源与语义：URL 用名词复数表达资源如 /users/42/orders，HTTP 方法表达操作——GET 读、POST 建、PUT 全量改、PATCH 部分改、DELETE
+    删，避免动词进 URL；版本放 URI 或 Header，层级表达从属最深两层。状态码语义化是硬要求：201 已创建、400 参数错、401 未认证、403 无权限、429 限流，200 包错误码是反模式，会让网关与监控全瞎。分页排序过滤用查询参数，错误响应统一结构并带
+    traceId 便于排查。
+  points:
+  - 名词复数表资源，方法表操作
+  - 拒绝 200 包错误码的反模式
+  - 分页过滤走查询参数，错误带 traceId
+- title: JWT 与 Session-Cookie 的本质差异
+  content: Session-Cookie 把状态放在服务端：登录后存会话、下发 session_id 到 Cookie，可主动踢人、会话数据可变，但分布式必须集中存储到 Redis，跨端不便且要防
+    CSRF。JWT 把状态放在客户端：签名保证不可篡改，服务端不存会话天然水平扩展、跨端通用，但签发后无法主动作废，登出踢人要等自然过期，Payload 只是 Base64 编码不是加密，不能放敏感数据。本质区别是有状态与无状态的取舍，JWT
+    的不可作废是设计取舍不是缺陷。
+  points:
+  - Session 状态在服务端，JWT 在客户端
+  - JWT 无状态易扩展但无法主动作废
+  - Payload 只是编码不是加密
+- title: 短 access token 与 refresh token 的混合方案
+  content: 工程正解是双 token 混合：短命 access token 15 分钟到 2 小时，无状态验证扛日常请求；长命 refresh token 存数据库或 Redis 可吊销，只用于换发新
+    access token。这样兼得无状态验证的性能与可控吊销的安全——踢人下线只需删除 refresh token，最多等 access token 自然过期。端上的选择：小程序与 App 用 token
+    放请求头；同域 Web 用 Cookie 配 SameSite 防 CSRF 更省心。refresh token 要做轮换，一次使用后立即作废换新。
+  points:
+  - 短 token 无状态验证，长 token 可吊销
+  - 踢人删 refresh token 即可
+  - refresh token 轮换防重放
+- title: OAuth2 授权码模式的四步流程
+  content: 授权码模式四步：第一步跳转授权页，带 client_id、redirect_uri、scope、state 随机串防 CSRF；第二步用户同意后重定向回 redirect_uri 并附一次性
+    code；第三步后端拿 code 加 client_secret 换 access_token，这一步在服务端完成，密钥不暴露给前端；第四步用 access_token 调资源 API 完成登录。绕一道
+    code 的意义在于 token 不经过浏览器 URL，且换 token 需要服务端持有的密钥，防中间人与令牌泄露。
+  points:
+  - state 随机串防 CSRF
+  - code 一次性，换 token 在服务端
+  - 密钥不进前端，token 不过浏览器
+- title: PKCE 解决公开客户端的授权码劫持
+  content: 公开客户端（前端 SPA、移动端）没有 client_secret 可存，授权码可能被恶意应用截获。PKCE 的解法：客户端先生成随机 code_verifier，其哈希 code_challenge
+    随授权请求发出，换 token 时必须出示原始 verifier——截获 code 的人没有 verifier 依然换不到 token。现在 GitHub 与 Google 对前端应用都推荐或强制
+    PKCE。概念辨析：OAuth2 是授权框架不是认证协议，OIDC 在其上加 id_token 才是认证标准，用 GitHub 登录严格说是 OIDC。
+  points:
+  - verifier 的哈希先行，原值换 token
+  - 截获 code 无 verifier 换不到 token
+  - OIDC 加 id_token 才是认证
+- title: SSO 单点登录的两种实现路线
+  content: 单点登录的本质是把认证域收敛到一处，各系统用安全方式换取本地会话。CAS 路线适合同父域的企业内网：访问系统 A 未登录重定向到认证中心，登录后种下全局 Cookie TGC 并发一次性
+    ticket 回 A，A 用 ticket 验证后建立本地会话；访问系统 B 时 TGC 还在直接发票据，用户无感；登出时通知各子系统销毁会话。Token/OIDC 路线适合跨域与 App：认证中心即
+    IdP，各系统持有自己的 access token，登出靠过期与前端清理。票据要一次性、短有效期、走 HTTPS。
+  points:
+  - CAS 靠全局 Cookie 加一次性票据
+  - Token 路线适合跨域与多端
+  - 登出一致性是两方案的共同难点
+- title: CORS 的简单请求与预检请求
+  content: 同源策略禁止页面读取跨源响应，CORS 让服务端声明允许的源。简单请求（GET、POST 加安全头部）浏览器直接发送带 Origin 头，服务端返回 Access-Control-Allow-Origin
+    匹配则放行；非简单请求（带 Authorization、JSON 类型、PUT、DELETE）先触发预检：浏览器发 OPTIONS 询问允许的源、方法与头部，通过后才发真实请求。预检是浏览器行为，curl
+    与服务端调用没有预检。注意请求其实已到达服务端，被拦截的是浏览器不给 JS 看响应。
+  points:
+  - 简单请求直接发，非简单先 OPTIONS 预检
+  - 预检只存在于浏览器环境
+  - 拦截的是响应读取而非请求本身
+- title: CORS 配置的常见坑
+  content: 配置 CORS 的要点：携带 Cookie 时 Access-Control-Allow-Origin 不能是通配符，必须精确指定源并返回 Allow-Credentials 为 true；Allow-Headers
+    要包含前端实际发送的 Authorization 与 Content-Type；Max-Age 设长一些减少预检；绝不能反射任意 Origin。常见坑：Nginx 与后端都配 CORS 导致响应头重复报错；OPTIONS
+    预检被鉴权拦截返回 401，预检必须放行。替代方案是开发期 Vite 代理、生产 Nginx 反代同域部署。
+  points:
+  - 带 Cookie 必须精确源加 Credentials
+  - OPTIONS 预检不能被鉴权拦截
+  - 代理与后端重复配置会头重复
+- title: XSS 的三类攻击与分层防御
+  content: XSS 是把恶意脚本注入页面在其他用户浏览器执行，分三类：存储型存进数据库每个访问者都执行危害最大；反射型藏在 URL 参数被服务端拼进响应；DOM 型纯前端把不可信数据写进 innerHTML。防御分层：输入校验加按上下文输出转义（HTML
+    实体、JS 字符串、URL 编码规则各不同）；框架插值默认转义，禁止 v-html 直插富文本，必须过 DOMPurify 白名单；CSP 限制脚本来源让内联注入无法执行，是最后防线；Cookie
+    加 HttpOnly 防窃取、Secure、SameSite。
+  points:
+  - 存储型危害最大，DOM 型不发服务端
+  - 输出转义按上下文选规则
+  - CSP 是最后防线不是转义的替代
+- title: CSRF 的原理与防御手段
+  content: CSRF 利用浏览器向某站点发请求自动带 Cookie 的特性：用户登录着银行站点时访问恶意网页，其中的 img 或自动表单借用户之手发出带登录态的请求。与 XSS 的区别：XSS
+    在目标站点执行脚本能干一切，CSRF 不执行脚本只冒用身份发请求。防御：CSRF Token 服务端下发随机串提交必须携带；SameSite 设为 Lax 或 Strict 限制跨站携带 Cookie；校验
+    Origin 与 Referer；用 Authorization Header 的 token 方案天然免疫 CSRF。
+  points:
+  - 借 Cookie 自动携带冒用身份
+  - XSS 执行脚本，CSRF 只发请求
+  - SameSite 加 CSRF Token 双保险
+- title: 浏览器渲染关键路径
+  content: 浏览器渲染管线六步：HTML 增量解析成 DOM 树；CSS 解析成 CSSOM；两者合并成渲染树剔除 display 为 none 的节点；Layout 回流计算几何位置；Paint
+    重绘像素；Composite 合成图层上屏。JS 的特殊性：script 默认阻塞 DOM 解析，async 下载完乱序执行，defer 解析完按序执行。性能抓手对应管线：关键 CSS 内联、CSS
+    放头 JS 加 defer、批量改样式、用 transform 代替 top 和 left 走合成器线程、虚拟列表减节点、图片懒加载。回流必然重绘，重绘不一定回流。
+  points:
+  - DOM 加 CSSOM 合成渲染树
+  - 回流、重绘、合成依次进行
+  - transform 与 opacity 不经主线程
+- title: 虚拟 DOM 与 diff 的关键优化
+  content: 虚拟 DOM 用 JS 对象描述真实 DOM 树，数据变化时生成新树，新旧 diff 找最小变更集再一次性 patch——把昂贵的 DOM 操作收敛为对比加批量更新。diff 的关键优化：只做同层级对比把树对比降到
+    O(n)；节点类型不同直接销毁重建不深比；列表用稳定唯一的业务 id 作 key，能识别移动与增删并复用节点，用 index 当 key 在增删排序时会错位复用导致输入框串内容的经典 bug；React.memo
+    与 Vue 响应式依赖收集做组件级短路跳过子树 diff。
+  points:
+  - 同层对比把树 diff 降到 O(n)
+  - 类型不同直接重建不深比
+  - key 用业务 id，index 会错位复用
+- title: Vue 与 React 响应式原理的差异
+  content: Vue3 是推模型：渲染函数读取数据时被 Proxy 的 getter 拦截，把当前渲染副作用登记为依赖；数据变更时精确通知对应 effect 重跑——改谁更新谁，配合编译期 patch
+    flag 粒度极细，直接改属性即可触发更新。React 是拉模型：setState 只标记组件脏了，调度器从该组件起整棵子树重新渲染，不知道哪份数据变了，所以需要手动 memo、useMemo、useCallback
+    跳过，且必须不可变更新。Fiber 把渲染拆成可中断单元支持并发调度。
+  points:
+  - Vue Proxy 依赖追踪精确更新
+  - React 整树重渲染，优化靠 memo
+  - Vue 直接改，React 不可变更新
+- title: 前端状态管理的分类选型
+  content: 先给状态分类再选工具：表单输入、弹窗开关是组件本地状态用 ref 或 useState；登录用户、主题、跨页筛选才是全局状态；接口数据属于服务端状态交给 React Query、SWR
+    类方案管理缓存与失效，别手塞进全局 store；页码、tab、搜索词放 URL 可分享可回退。方案上 Vue 用官方 Pinia，React 轻量选 Zustand、Jotai，大型团队规范用 Redux
+    Toolkit；Context 只解决传递不解决性能，高频更新别拿它当状态管理。原则是状态放得越近越好，全局只放应用级状态。
+  points:
+  - 先分类：本地、全局、服务端、URL 四类
+  - 服务端状态交给 React Query 类方案
+  - Context 不解决性能问题
+- title: HTTP 强缓存与协商缓存
+  content: 强缓存不发请求：Cache-Control 的 max-age 未过期时浏览器直接用本地缓存；no-cache 是可缓存但每次协商，no-store 才是彻底不存。协商缓存发请求验证：Last-Modified
+    秒级精度有误判可能，ETag 按内容哈希优先级更高，未变返回 304。经典组合拳：带内容哈希的静态资源设 public 加 max-age 一年加 immutable，文件名变即缓存失效；index.html
+    设 no-cache 保证第一时间拿到新版本引用；API 按数据特性决定策略。
+  points:
+  - 强缓存不发请求，协商缓存 304 验证
+  - ETag 优先级高于 Last-Modified
+  - hash 资源长缓存，html 用 no-cache
+- title: WebSocket、SSE 与轮询的选型
+  content: 实时通信按交互方向选型：短轮询定时请求实现最简但空查询多；长轮询服务端 hold 住请求延迟更低但 HTTP 开销大。SSE 是 HTTP 长连接上的服务器单向推送，EventSource
+    自动重连，天然过网关代理，是 LLM 流式输出、通知、行情这类单向场景的最优解。WebSocket 是独立协议的双向全双工连接，帧开销小，适合聊天、协同编辑、实时交易，代价是断线重连心跳要自己做、Nginx
+    要配 Upgrade、鉴权麻烦。口诀：单向推送用 SSE，双向互动用 WS，低频变更轮询足够。
+  points:
+  - SSE 单向推送，简单可靠过网关
+  - WebSocket 双向全双工但运维成本高
+  - 别用 WebSocket 做只需 SSE 的事
+- title: Node.js 事件循环与 CPU 密集困境
+  content: Node 是单线程 JS 执行加 libuv 事件循环加线程池的结构，IO 交给底层异步，一个线程服务成千上万连接。循环六阶段：timers 处理到期定时器，pending callbacks
+    处理系统回调，poll 取 IO 事件执行回调是时间大头，check 执行 setImmediate，close 处理关闭回调，阶段间清空 Promise 微任务队列。它不适合 CPU 密集：一个
+    100 毫秒的同步计算会让事件循环停摆、所有请求阻塞，应对是 worker_threads、子进程或下沉到独立服务。
+  points:
+  - 六阶段循环，阶段间清空微任务
+  - 单线程高并发靠 IO 异步而非计算
+  - CPU 密集用 worker_threads 化解
+- title: Nginx 在前端部署中的职责
+  content: 部署链路：CI 构建带 hash 产物、CDN 加速、Nginx 入口。Nginx 的职责清单：静态托管 root 指向 dist，try_files 支持 SPA 的 history
+    路由刷新不 404，gzip 压缩，带 hash 资源长缓存、index.html 设 no-cache；反向代理把 /api 转发到后端集群，统一入口顺带解决跨域；upstream 负载均衡配合健康检查摘除故障节点；TLS
+    终结、HTTP/2、limit_req 限流。发布用版本目录软链原子切换秒级回滚，只开 80 与 443。
+  points:
+  - try_files 支撑 SPA history 路由
+  - 反代统一入口并解决跨域
+  - 软链原子切换，回滚看速度
+- title: CI/CD 流水线与发布策略
+  content: CI 每次推送触发：lint、类型检查、单测加覆盖率卡点，构建产物带 hash，后端多阶段构建镜像并用 git sha 打 tag，并行加速且失败即阻断合并。CD 分环境推进：合并到
+    main 自动部署测试环境跑冒烟与 e2e；生产发布走手动审批、灰度放量、观察错误率与延迟指标、全量，任何异常一键回滚。数据库变更单独管理，migration 先行且向后兼容，两段式发布先加列后删列。原则：流水线越快越好，一切变更走流水线，部署不等于发布——发布是流量切换，要能随时回。
+  points:
+  - CI 卡点 lint、test、build 并行
+  - 生产灰度放量，指标异常即回滚
+  - 部署不等于发布，回滚要分钟级
+- title: RBAC 权限模型设计
+  content: RBAC 的核心是五张表：user、role、permission 加 user_role、role_permission 两张关联表，授权给角色而非个人，换人只换角色绑定。功能权限在后端每个接口标注所需权限做校验，前端隐藏按钮只是体验优化，后端校验才是安全边界；前端用路由守卫与按钮级权限指令，权限码由接口下发避免写死。数据权限在
+    SQL 层注入过滤条件——部门隔离、上下级可见、仅本人，数据范围作为角色属性配置化。进阶点：权限缓存与失效、多租户强制过滤、审计日志。第一原则是默认拒绝，显式授予。
+  points:
+  - 五张表结构，授权给角色而非个人
+  - 后端校验是安全边界，前端只是体验
+  - 数据权限靠 SQL 层注入过滤条件
+- title: BFF 与 API 网关的分工
+  content: API 网关是系统边界统一入口：路由转发、统一鉴权、限流熔断、日志审计、TLS 终结、灰度分流，特点是不关心业务，横切面的事全收，实现有 Nginx、Kong、APISIX、Spring
+    Cloud Gateway。BFF 是为前端服务的聚合层：一个页面要的数据散在多个微服务，BFF 聚合成页面需要的形状一次返回，每端一个 BFF 各自裁剪字段，含业务编排逻辑——这是与网关的本质区别。类比：网关是小区保安，BFF
+    是各家的管家。小项目不必上 BFF；BFF 归前端团队维护是主流，注意业务逻辑腐化风险。
+  points:
+  - 网关管横切面，不关心业务
+  - BFF 聚合裁剪，贴页面形状
+  - BFF 归前端维护，防逻辑腐化
+- title: 前端错误监控与 sourceMap 链路
+  content: 前端监控覆盖 JS 错误、资源加载失败、接口错误率、白屏与 web-vitals。Sentry 提供错误聚合指纹去重、release 版本标记、面包屑回放。sourceMap 链路是关键：生产构建产出
+    .map 不上传 CDN 防源码泄露，构建后用 sentry-cli 上传，Sentry 把压缩堆栈还原为源码行号，release 必须与 sourcemap 严格对齐否则还原错乱。告警闭环：新指纹首次出现即时通知，发版后一小时错误率对比回归。坑：跨域脚本报
+    Script error 需加 crossorigin 与 CORS 头。
+  points:
+  - map 文件只传 Sentry 不上 CDN
+  - release 与 sourcemap 严格对齐
+  - 新指纹告警加发版错误率对比
+- title: SSR、SSG、ISR 与水合机制
+  content: SSR 每请求服务端渲染 HTML 直出，首屏快 SEO 好，服务端有计算成本；SSG 构建时预渲染全部静态页，CDN 分发最快，适合内容固定的官网文档；ISR 是静态页加后台按 TTL
+    重新生成，静态速度加准实时内容，电商商品页利器。水合是 SSR 的必经环节：HTML 是死的，客户端 JS 重建组件树并绑定事件后页面才可交互，要求客户端与服务端渲染结果一致，Date.now、随机数、window
+    判断都会造成 hydration mismatch。演进方向是流式 SSR、选择性水合、岛屿架构。
+  points:
+  - SSG 最快，ISR 兼顾实时性
+  - 水合后页面才可交互
+  - 服务端客户端渲染不一致即 mismatch
+- title: 首屏性能优化的排查与分层手段
+  content: 先定指标再优化：LCP 评估最大内容渲染、INP 评估交互响应、CLS 评估布局偏移，用 Lighthouse 与真实用户监控建立基线。排查路径：网络瀑布看 TTFB 与资源加载，bundle
+    分析看包构成，渲染路径看关键 CSS 与阻塞脚本。手段分层：网络层 CDN 加 HTTP/2 加压缩加图片 WebP 懒加载；资源层路由级代码分割、Tree-shaking、大依赖动态加载、critical
+    CSS 内联；渲染层 SSR 骨架屏虚拟列表。原则：先吃缓存与压缩的免费午餐再动架构，没有数据的优化是玄学，CI 设体积预算卡点。
+  points:
+  - LCP、INP、CLS 三大核心指标
+  - 先缓存压缩后架构，数据驱动
+  - 路由分割加关键 CSS 内联

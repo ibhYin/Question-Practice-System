@@ -9,6 +9,7 @@ Redis 承担：
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -21,6 +22,7 @@ from .backup import maybe_backup
 from .database import SessionLocal
 from .errors import BizError
 from .models import InterviewAnswer, InterviewSession, Question
+from .question_bank import SERVE_RECENT_KEY
 from .redis_client import rdb
 
 SESSION_TTL = 2 * 3600
@@ -131,6 +133,11 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
 
     _set_state(session.id, 0, session.question_ids)
     rdb.set(LOCK_KEY, str(session.id), ex=LOCK_TTL)  # 带 TTL：崩溃/遗忘不会永久锁死
+
+    # 记录服务历史（供 72h 冷却：近期出过的题沉底，保证刷题多样性）
+    now = time.time()
+    rdb.zadd(SERVE_RECENT_KEY, {qid: now for qid in session.question_ids})
+    rdb.zremrangebyscore(SERVE_RECENT_KEY, "-inf", now - 7 * 86400)  # 清理 7 天前记录
 
     return {
         "session_id": session.id,

@@ -1,150 +1,190 @@
 category: SPRING
 doc:
-  title: "Spring 知识体系全景"
-  content: |
-    Spring 的知识体系可以沿一条主线展开：容器如何管理对象（IoC），公共逻辑如何织入（AOP），对象从生到死怎么走（Bean 生命周期），数据一致性怎么保证（事务），Web 请求怎么流转（MVC），以及 Spring Boot 如何把这一切自动化（自动装配）。
-
-    第一层是 IoC。控制反转指对象的创建与依赖装配交给容器，业务代码只声明需要什么；DI 是实现手段，其中构造器注入是最佳实践——依赖不可变、显式、便于测试，还能让循环依赖在启动期就暴露。IoC 的底层容器是 BeanFactory，ApplicationContext 在其上增强了事件发布、国际化、资源加载等能力；FactoryBean 则是容器里一个特殊的 Bean，getObject() 生产的对象才暴露给容器，MyBatis 的 SqlSessionFactoryBean 是典型实现。
-
-    第二层是 AOP。日志、事务、权限、限流这些横切逻辑通过动态代理织入：有接口走 JDK 动态代理，无接口走 CGLIB 子类代理，Spring Boot 2.x 起默认 CGLIB。切点决定在哪切，通知决定切了干什么，多个切面按 @Order 形成责任链。代理只拦截外部调用——这直接决定了事务失效的最经典场景：同类 this 自调用。
-
-    第三层是 Bean 生命周期：实例化、属性填充、Aware 回调、BeanPostProcessor 前置、初始化（@PostConstruct、afterPropertiesSet、init-method 依次执行）、BeanPostProcessor 后置、进入单例池、销毁回调。AOP 代理通常在初始化后生成；循环依赖则靠三级缓存提前暴露工厂，只有真正发生循环时才提前生成代理，维持标准生命周期不被破坏。
-
-    第四层是事务。传播行为以 REQUIRED 为默认，REQUIRES_NEW 独立提交，NESTED 用 savepoint 嵌套；失效场景全部围绕代理展开——方法非 public、this 自调用、异常被 catch 吞掉、受检异常未配 rollbackFor、多线程脱离事务上下文、MyISAM 引擎不支持。
-
-    第五层是 MVC：DispatcherServlet 统一收口，HandlerMapping 找到处理器与拦截器链，HandlerAdapter 完成参数解析与返回值处理，异常由 @ControllerAdvice 全局兜底；拦截器做业务级校验，过滤器做协议级事务，两者层级分明。
-
-    最后是 Spring Boot 自动装配：@EnableAutoConfiguration 导入 AutoConfigurationImportSelector，读取各 jar 包的 AutoConfiguration.imports 名单，再由 @ConditionalOnClass、@ConditionalOnMissingBean 按需过滤，配合 @ConfigurationProperties 绑定 application.yml——引入 starter 即完成装配，这就是约定优于配置的全部秘密。
+  title: Spring 知识体系全景
+  content: "Spring 的知识体系可以沿一条主线展开：容器如何管理对象（IoC），公共逻辑如何织入（AOP），对象从生到死怎么走（Bean 生命周期），数据一致性怎么保证（事务），Web 请求怎么流转（MVC），以及\
+    \ Spring Boot 如何把这一切自动化（自动装配）。\n\n第一层是 IoC。控制反转指对象的创建与依赖装配交给容器，业务代码只声明需要什么；DI 是实现手段，其中构造器注入是最佳实践——依赖不可变、显式、便于测试，还能让循环依赖在启动期就暴露。IoC\
+    \ 的底层容器是 BeanFactory，ApplicationContext 在其上增强了事件发布、国际化、资源加载等能力；FactoryBean 则是容器里一个特殊的 Bean，getObject()\
+    \ 生产的对象才暴露给容器，MyBatis 的 SqlSessionFactoryBean 是典型实现。\n\n第二层是 AOP。日志、事务、权限、限流这些横切逻辑通过动态代理织入：有接口走 JDK\
+    \ 动态代理，无接口走 CGLIB 子类代理，Spring Boot 2.x 起默认 CGLIB。切点决定在哪切，通知决定切了干什么，多个切面按 @Order 形成责任链。代理只拦截外部调用——这直接决定了事务失效的最经典场景：同类\
+    \ this 自调用。\n\n第三层是 Bean 生命周期：实例化、属性填充、Aware 回调、BeanPostProcessor 前置、初始化（@PostConstruct、afterPropertiesSet、init-method\
+    \ 依次执行）、BeanPostProcessor 后置、进入单例池、销毁回调。AOP 代理通常在初始化后生成；循环依赖则靠三级缓存提前暴露工厂，只有真正发生循环时才提前生成代理，维持标准生命周期不被破坏。\n\
+    \n第四层是事务。传播行为以 REQUIRED 为默认，REQUIRES_NEW 独立提交，NESTED 用 savepoint 嵌套；失效场景全部围绕代理展开——方法非 public、this\
+    \ 自调用、异常被 catch 吞掉、受检异常未配 rollbackFor、多线程脱离事务上下文、MyISAM 引擎不支持。\n\n第五层是 MVC：DispatcherServlet 统一收口，HandlerMapping\
+    \ 找到处理器与拦截器链，HandlerAdapter 完成参数解析与返回值处理，异常由 @ControllerAdvice 全局兜底；拦截器做业务级校验，过滤器做协议级事务，两者层级分明。\n\n\
+    最后是 Spring Boot 自动装配：@EnableAutoConfiguration 导入 AutoConfigurationImportSelector，读取各 jar 包的 AutoConfiguration.imports\
+    \ 名单，再由 @ConditionalOnClass、@ConditionalOnMissingBean 按需过滤，配合 @ConfigurationProperties 绑定 application.yml——引入\
+    \ starter 即完成装配，这就是约定优于配置的全部秘密。\n\n# \U0001F4CC 知识速览图\n\n把上面正文的零散知识串成一张张图——先自己复述，再对照图检验。\n\n### Bean\
+    \ 生命周期\n\n```mermaid\nflowchart TD\n    A[实例化<br>反射创建] --> B[属性填充<br>依赖注入]\n    B --> C[Aware 回调]\n\
+    \    C --> D[BeanPostProcessor 前置]\n    D --> E[初始化<br>@PostConstruct → afterPropertiesSet → init-method]\n\
+    \    E --> F[BeanPostProcessor 后置<br>AOP 代理在此生成]\n    F --> G[放入单例池使用]\n    G --> H[销毁<br>@PreDestroy\
+    \ → destroy → destroy-method]\n```\n"
 cards:
-  - title: "IoC 控制反转与 DI 依赖注入的关系"
-    content: "IoC 是思想：对象的创建与依赖装配由容器接管，控制权从业务代码反转给 Spring。DI 是实现手段，三种注入方式中构造器注入是官方推荐——字段不可变、依赖显式、便于 mock 测试，还能让循环依赖在启动期就暴露而不是拖到运行时。收益上面向接口编程让实现可替换，单例统一复用，生命周期由容器统一管理，业务代码只关心业务本身。"
-    points:
-      - "IoC 是思想，DI 是实现手段"
-      - "构造器注入优于 setter 与字段注入"
-      - "解耦、单例复用、便于测试、生命周期统一"
-  - title: "AOP 把横切逻辑织入业务代码"
-    content: "日志、事务、权限、限流这类横切逻辑不该散落在业务方法里，AOP 用动态代理把它们集中到切面统一织入。切点 Pointcut 决定在哪切，通知 Advice 决定切了干什么，@Before、@After、@Around 是常用通知类型，切面就是切点加通知。Spring AOP 是运行时代理方案，只拦截从外部进入的 Bean 方法调用，同类内部调用不经过代理——这也是理解事务失效的钥匙，@Transactional 本身就是一个典型的 AOP 应用。"
-    points:
-      - "横切逻辑抽离，动态代理织入"
-      - "切点定位置，通知定行为"
-      - "只拦截外部调用，自调用绕过代理"
-  - title: "JDK 动态代理与 CGLIB 的选择策略"
-    content: "JDK 动态代理通过 Proxy.newProxyInstance 运行时生成实现接口的代理类，要求目标必须有接口；CGLIB 基于 ASM 生成目标类的子类进行拦截，类或方法被 final 修饰则无法代理。Spring 的默认策略是有接口用 JDK 代理，Spring Boot 2.x 起默认强制 CGLIB（proxy-target-class 为 true），统一行为避免注入实现类时类型转换出错。JDK8 之后两者性能差距可以忽略，CGLIB 需注意生成的代理类占用 Metaspace。"
-    points:
-      - "JDK 代理必须有接口，CGLIB 生成子类"
-      - "final 类与 final 方法 CGLIB 无法代理"
-      - "Spring Boot 2.x 起默认 CGLIB"
-  - title: "Bean 生命周期主线八步"
-    content: "单例 Bean 从生到死走一条固定流水线：根据 BeanDefinition 反射实例化；populateBean 填充属性完成依赖注入；回调 Aware 拿容器信息；BeanPostProcessor 前置处理；初始化按 @PostConstruct、afterPropertiesSet、init-method 顺序执行；后置处理；进入单例池；容器关闭时按 @PreDestroy、destroy、destroy-method 逆序销毁。常追问代理生成时机与初始化回调顺序。"
-    points:
-      - "实例化、属性填充、Aware、前后置处理"
-      - "初始化三回调按注解、接口、方法顺序"
-      - "销毁回调逆序执行"
-  - title: "AOP 代理在初始化后阶段生成"
-    content: "Bean 生命周期中真正生成代理的是 BeanPostProcessor 的 postProcessAfterInitialization 阶段，由 AnnotationAwareAspectJAutoProxyCreator 完成扫描匹配并包装原对象返回代理。这解释了两个高频追问：为什么 @PostConstruct 执行时代理还不存在（初始化之后才包装）；为什么循环依赖场景要在三级缓存的工厂里提前生成代理（否则依赖方拿到的是原始对象而不是代理）。"
-    points:
-      - "postProcessAfterInitialization 生成代理"
-      - "初始化回调执行时代理尚不存在"
-      - "循环依赖时才提前到工厂生成代理"
-  - title: "三级缓存解决单例循环依赖"
-    content: "A 依赖 B、B 又依赖 A 时，Spring 用三级缓存打破僵局：一级 singletonObjects 存成品单例，二级 earlySingletonObjects 存提前曝光的半成品，三级 singletonFactories 存能产出早期引用的 ObjectFactory。流程是 A 实例化后先把工厂放入三级缓存，填充属性时创建 B，B 需要 A 时从三级缓存拿到工厂生成早期引用放入二级缓存，B 完成后 A 继续完成。核心是提前暴露半成品引用，让创建链不至于死锁。"
-    points:
-      - "一级存成品，二级存半成品，三级存工厂"
-      - "半成品提前曝光打破创建死锁"
-      - "B 拿 A 的早期引用后 A 才能完成"
-  - title: "第三级缓存为什么存工厂而不是对象"
-    content: "如果 A 需要 AOP 代理，循环依赖中 B 拿到的必须是代理而非原始对象。三级缓存存 ObjectFactory，只有真的发生循环依赖、有人来取早期引用时才调用工厂提前生成代理；没有循环依赖就维持标准生命周期，在初始化后阶段才生成代理。若只有两级缓存，要么所有 Bean 一律提前代理破坏设计原则，要么循环依赖拿到原始对象埋下隐患。这是设计原则与运行时正确性之间的精妙权衡。"
-    points:
-      - "工厂延迟决策，需要时才提前代理"
-      - "没有循环依赖就保持标准生命周期"
-      - "两级缓存要么全提前代理要么拿原始对象"
-  - title: "循环依赖的适用边界与治理"
-    content: "三级缓存只对单例作用域加 setter 或字段注入有效。构造器注入的循环依赖无解——对象还没实例化就无法提前暴露，可用 @Lazy 注入代理延迟打破，或重构拆分职责；prototype 作用域不支持，容器不缓存其创建过程。工程上出现循环依赖多半是设计信号，说明两个类职责纠缠，优先重构而不是依赖容器兜底；Spring Boot 2.6 起默认禁止循环依赖，就是为了逼出健康的设计。"
-    points:
-      - "仅单例加 setter 或字段注入有效"
-      - "构造器注入用 @Lazy 或重构解决"
-      - "prototype 不支持循环依赖"
-  - title: "BeanFactory 与 FactoryBean 的本质区别"
-    content: "BeanFactory 是 Spring 的底层容器接口，负责 Bean 的注册、getBean 获取与生命周期管理，是造 Bean 的工厂，也是 ApplicationContext 的父接口。FactoryBean 是容器里一个特殊的 Bean，getObject() 返回的对象才是真正暴露给容器的实例，用于封装复杂构建；MyBatis 的 SqlSessionFactoryBean 是经典实现，getBean 用 & 前缀才能拿到它本身。一句话：前者是容器，后者是容器里会生产 Bean 的 Bean。"
-    points:
-      - "BeanFactory 是容器，FactoryBean 是特殊 Bean"
-      - "getObject() 的返回值才暴露给容器"
-      - "getBean 加 & 前缀拿 FactoryBean 自身"
-  - title: "ApplicationContext 对 BeanFactory 的增强"
-    content: "ApplicationContext 继承 BeanFactory 的容器能力，并叠加企业级特性：事件发布监听、国际化 MessageSource、统一资源加载、环境抽象 Environment、启动时自动注册 BeanPostProcessor。加载策略也不同：BeanFactory 懒加载按需初始化，ApplicationContext 默认启动预实例化所有单例，提前暴露配置问题。面试中两者对比常与 FactoryBean 辨析一起出现。"
-    points:
-      - "事件、国际化、资源加载、环境抽象四大增强"
-      - "启动自动注册 BeanPostProcessor"
-      - "默认预实例化单例，问题早暴露"
-  - title: "常用事务传播行为及语义"
-    content: "REQUIRED 是默认值，当前有事务就加入，没有就新建；REQUIRES_NEW 挂起当前事务另开新事务，两边独立提交回滚，适合操作日志这类业务回滚也要保留的场景；NESTED 在当前事务内建 savepoint，外层回滚带动内层，内层回滚不影响外层；SUPPORTS、NOT_SUPPORTED、MANDATORY、NEVER 表达跟随或禁止已有事务的语义。传播行为由 AOP 代理在方法进入时决策，是声明式事务的核心配置项。"
-    points:
-      - "REQUIRED 默认，有则加入无则新建"
-      - "REQUIRES_NEW 独立提交回滚互不影响"
-      - "NESTED 基于 savepoint 可部分回滚"
-  - title: "@Transactional 失效场景清单"
-    content: "事务靠 AOP 代理实现，一切绕过代理的写法都失效：方法非 public 时代理不织入；同类 this 自调用绕过代理，是最经典的一类；异常被 try-catch 吞掉，切面感知不到就不会回滚；默认只对 RuntimeException 和 Error 回滚，抛受检异常需配置 rollbackFor 为 Exception.class；数据库引擎为 MyISAM 不支持事务；事务上下文绑定 ThreadLocal 连接，子线程不在同一事务；Bean 未被 Spring 管理或传播行为用了 NOT_SUPPORTED 同样失效。"
-    points:
-      - "自调用、非 public、异常被吞是三大经典"
-      - "默认只回滚 RuntimeException 与 Error"
-      - "多线程子事务不在同一连接上下文"
-  - title: "同类自调用失效的三种解法"
-    content: "同一个类里方法 A 直接调用带 @Transactional 的方法 B，this 引用指向原始对象而非代理，事务不生效。解法一：把 B 拆到另一个 Bean，让调用走代理；解法二：注入自身代理，通过 @Lazy 注入 self 或 AopContext.currentProxy()（需 exposeProxy 为 true）调用；解法三：放弃声明式改用编程式 TransactionTemplate，在模板回调里执行 B 的逻辑。排查时开启 orm 层 DEBUG 日志，观察 begin 与 commit 是否出现即可定位。"
-    points:
-      - "拆 Bean 是最干净的重构解法"
-      - "AopContext 需开启 exposeProxy"
-      - "TransactionTemplate 适合自调用与异步"
-  - title: "Spring MVC 处理请求的完整链路"
-    content: "DispatcherServlet 统一收口：HandlerMapping 按 @RequestMapping 表找到 Handler 与拦截器链；拦截器 preHandle 依次执行；HandlerAdapter 执行 Controller 方法，参数解析、@RequestBody 反序列化；返回值经 ReturnValueHandler 处理，@ResponseBody 走 Jackson 序列化；之后 postHandle 与渲染，afterCompletion 兜底；异常由 @ControllerAdvice 统一处理。"
-    points:
-      - "HandlerMapping 定位，HandlerAdapter 执行"
-      - "拦截器三段回调贯穿前后"
-      - "异常统一出口在 @ControllerAdvice"
-  - title: "拦截器与过滤器的分层差异"
-    content: "Filter 是 Servlet 规范组件，包在 DispatcherServlet 外面，拦截一切请求；Interceptor 是 Spring MVC 机制，只拦进入 Handler 的请求，顺序为 Filter、Servlet、Interceptor、Controller。Filter 拿不到 Handler 上下文，其异常到不了 @ControllerAdvice；拦截器可读取方法注解做细粒度控制。分工惯例：Filter 做编码、CORS、traceId 等协议级事务，Interceptor 做登录态、权限点等业务级校验。"
-    points:
-      - "Filter 在容器层，Interceptor 在 MVC 层"
-      - "Filter 异常进不了全局异常处理"
-      - "协议级用 Filter，业务级用 Interceptor"
-  - title: "Bean 作用域与单例有状态问题"
-    content: "常用作用域有 singleton（默认，容器级单例）、prototype（每次获取新实例，容器不管理其销毁）以及 Web 场景的 request、session、application、websocket。单例被所有请求共享，可变成员变量就是并发事故之源——计数错乱、请求串数据；解法是把 Bean 设计成无状态，状态放方法参数、ThreadLocal 或外部存储，必要时用原子类加同步。prototype 注入 singleton 只会注入一次，失去每次新建的意义，可用 ObjectProvider 延迟获取。"
-    points:
-      - "singleton 默认，prototype 每取每新"
-      - "单例可变成员变量是并发事故之源"
-      - "prototype 依赖 singleton 用 ObjectProvider"
-  - title: "@Autowired 与 @Resource 的装配规则"
-    content: "@Autowired 是 Spring 注解，先按类型匹配，多个候选时再用名称、@Qualifier 或 @Primary 消歧；@Resource 是 JDK 标准注解，先按名称匹配，找不到再退回按类型。选型上字段注入用 @Resource 名字即语义更精准，而构造器注入配合 @Autowired 是最佳实践——可写 final、依赖显式、测试友好。注入失败的常见排查点：包不在扫描范围、接口多实现未指定、条件装配被用户 Bean 抢注、CGLIB 代理类型与声明类型不匹配。"
-    points:
-      - "Autowired 先按类型，Resource 先按名称"
-      - "字段注入是反模式，构造器注入最佳"
-      - "失败排查从扫描范围与多实现入手"
-  - title: "Spring 事件机制与事务事件"
-    content: "事件机制是容器内的发布订阅解耦：ApplicationEventPublisher 发布事件，@EventListener 监听，属于进程级通信而非 MQ。监听方法加 @Async 即异步执行；@TransactionalEventListener 可指定在事务提交前、提交后或回滚后触发，解决事件处理依赖事务数据可见性的经典问题——订单创建事件必须等订单落库后再消费。边界要清楚：进程内事件不保证可靠投递，异步异常无重试，宕机即丢，要求可靠性必须上 MQ。"
-    points:
-      - "容器内发布订阅，不是消息队列"
-      - "AFTER_COMMIT 解决数据可见性问题"
-      - "不保证可靠投递，可靠性靠 MQ"
-  - title: "@Validated 与 @Valid 的分工"
-    content: "@Valid 是 JSR-380 标准注解，支持嵌套级联校验但不支持分组；@Validated 是 Spring 增强，支持分组且可用于类上做方法级校验，但默认不级联。组合用法：Controller 用 @Valid 校验嵌套 DTO，新增与修改规则不同时用 @Validated 指定分组，Service 层方法校验在类上标 @Validated。统一出口是 @RestControllerAdvice 捕获 MethodArgumentNotValidException，拼接字段错误返回结构化信息，不能裸抛给前端。"
-    points:
-      - "Valid 级联校验，Validated 支持分组"
-      - "分组解决新增与修改规则不同"
-      - "统一异常出口返回友好错误结构"
-  - title: "多切面执行顺序由 @Order 控制"
-    content: "多个切面按 @Order 数值从小到大形成责任链，值越小优先级越高越靠外层，未标注时顺序不确定。执行模型是高优先级切面的 @Around 前半段先走，再依次进入低优先级切面，最终执行目标方法，之后按逆序返回，@After 系列在最内层逆序执行。典型分层是日志切面在最外、事务切面居中、幂等限流切面贴近目标。经典坑：自定义切面包在事务外层时，proceed 抛出的异常发生在事务回滚之后，行为容易误判。"
-    points:
-      - "@Order 值越小越靠外层"
-      - "执行呈责任链，返回按逆序"
-      - "日志在外、事务居中、幂等贴目标"
-  - title: "Spring Boot 自动装配全链路"
-    content: "@SpringBootApplication 聚合 @ComponentScan 与 @EnableAutoConfiguration。自动装配核心是 AutoConfigurationImportSelector：读取各 jar 的 imports 文件拿到候选配置类，再由条件注解（@ConditionalOnClass 等）按需过滤，@ConfigurationProperties 绑定 yml。引入 starter 即自动装配，这就是约定优于配置。"
-    points:
-      - "EnableAutoConfiguration 是装配入口"
-      - "imports 文件 2.7 前是 spring.factories"
-      - "条件注解按需过滤实现约定优于配置"
-  - title: "自定义 starter 的三要素"
-    content: "自定义 starter 三件事：写自动配置类用 @Bean 注册 Bean，属性绑定用 @ConfigurationProperties；条件注解控制边界，@ConditionalOnClass 保证依赖存在才装配，@ConditionalOnMissingBean 保证用户自定义优先；在 META-INF/spring 的 AutoConfiguration.imports 登记配置类后打包发布，引入即生效。排查时加 --debug 启动，Conditions Evaluation Report 列出每个配置类生效与否及原因。"
-    points:
-      - "自动配置类加条件注解加 imports 登记"
-      - "MissingBean 保证用户配置优先"
-      - "--debug 查看条件评估报告"
+- title: IoC 控制反转与 DI 依赖注入的关系
+  content: IoC 是思想：对象的创建与依赖装配由容器接管，控制权从业务代码反转给 Spring。DI 是实现手段，三种注入方式中构造器注入是官方推荐——字段不可变、依赖显式、便于 mock 测试，还能让循环依赖在启动期就暴露而不是拖到运行时。收益上面向接口编程让实现可替换，单例统一复用，生命周期由容器统一管理，业务代码只关心业务本身。
+  points:
+  - IoC 是思想，DI 是实现手段
+  - 构造器注入优于 setter 与字段注入
+  - 解耦、单例复用、便于测试、生命周期统一
+- title: AOP 把横切逻辑织入业务代码
+  content: 日志、事务、权限、限流这类横切逻辑不该散落在业务方法里，AOP 用动态代理把它们集中到切面统一织入。切点 Pointcut 决定在哪切，通知 Advice 决定切了干什么，@Before、@After、@Around
+    是常用通知类型，切面就是切点加通知。Spring AOP 是运行时代理方案，只拦截从外部进入的 Bean 方法调用，同类内部调用不经过代理——这也是理解事务失效的钥匙，@Transactional
+    本身就是一个典型的 AOP 应用。
+  points:
+  - 横切逻辑抽离，动态代理织入
+  - 切点定位置，通知定行为
+  - 只拦截外部调用，自调用绕过代理
+- title: JDK 动态代理与 CGLIB 的选择策略
+  content: JDK 动态代理通过 Proxy.newProxyInstance 运行时生成实现接口的代理类，要求目标必须有接口；CGLIB 基于 ASM 生成目标类的子类进行拦截，类或方法被 final
+    修饰则无法代理。Spring 的默认策略是有接口用 JDK 代理，Spring Boot 2.x 起默认强制 CGLIB（proxy-target-class 为 true），统一行为避免注入实现类时类型转换出错。JDK8
+    之后两者性能差距可以忽略，CGLIB 需注意生成的代理类占用 Metaspace。
+  points:
+  - JDK 代理必须有接口，CGLIB 生成子类
+  - final 类与 final 方法 CGLIB 无法代理
+  - Spring Boot 2.x 起默认 CGLIB
+- title: Bean 生命周期主线八步
+  content: 单例 Bean 从生到死走一条固定流水线：根据 BeanDefinition 反射实例化；populateBean 填充属性完成依赖注入；回调 Aware 拿容器信息；BeanPostProcessor
+    前置处理；初始化按 @PostConstruct、afterPropertiesSet、init-method 顺序执行；后置处理；进入单例池；容器关闭时按 @PreDestroy、destroy、destroy-method
+    逆序销毁。常追问代理生成时机与初始化回调顺序。
+  points:
+  - 实例化、属性填充、Aware、前后置处理
+  - 初始化三回调按注解、接口、方法顺序
+  - 销毁回调逆序执行
+- title: AOP 代理在初始化后阶段生成
+  content: Bean 生命周期中真正生成代理的是 BeanPostProcessor 的 postProcessAfterInitialization 阶段，由 AnnotationAwareAspectJAutoProxyCreator
+    完成扫描匹配并包装原对象返回代理。这解释了两个高频追问：为什么 @PostConstruct 执行时代理还不存在（初始化之后才包装）；为什么循环依赖场景要在三级缓存的工厂里提前生成代理（否则依赖方拿到的是原始对象而不是代理）。
+  points:
+  - postProcessAfterInitialization 生成代理
+  - 初始化回调执行时代理尚不存在
+  - 循环依赖时才提前到工厂生成代理
+- title: 三级缓存解决单例循环依赖
+  content: A 依赖 B、B 又依赖 A 时，Spring 用三级缓存打破僵局：一级 singletonObjects 存成品单例，二级 earlySingletonObjects 存提前曝光的半成品，三级
+    singletonFactories 存能产出早期引用的 ObjectFactory。流程是 A 实例化后先把工厂放入三级缓存，填充属性时创建 B，B 需要 A 时从三级缓存拿到工厂生成早期引用放入二级缓存，B
+    完成后 A 继续完成。核心是提前暴露半成品引用，让创建链不至于死锁。
+  points:
+  - 一级存成品，二级存半成品，三级存工厂
+  - 半成品提前曝光打破创建死锁
+  - B 拿 A 的早期引用后 A 才能完成
+- title: 第三级缓存为什么存工厂而不是对象
+  content: 如果 A 需要 AOP 代理，循环依赖中 B 拿到的必须是代理而非原始对象。三级缓存存 ObjectFactory，只有真的发生循环依赖、有人来取早期引用时才调用工厂提前生成代理；没有循环依赖就维持标准生命周期，在初始化后阶段才生成代理。若只有两级缓存，要么所有
+    Bean 一律提前代理破坏设计原则，要么循环依赖拿到原始对象埋下隐患。这是设计原则与运行时正确性之间的精妙权衡。
+  points:
+  - 工厂延迟决策，需要时才提前代理
+  - 没有循环依赖就保持标准生命周期
+  - 两级缓存要么全提前代理要么拿原始对象
+- title: 循环依赖的适用边界与治理
+  content: 三级缓存只对单例作用域加 setter 或字段注入有效。构造器注入的循环依赖无解——对象还没实例化就无法提前暴露，可用 @Lazy 注入代理延迟打破，或重构拆分职责；prototype
+    作用域不支持，容器不缓存其创建过程。工程上出现循环依赖多半是设计信号，说明两个类职责纠缠，优先重构而不是依赖容器兜底；Spring Boot 2.6 起默认禁止循环依赖，就是为了逼出健康的设计。
+  points:
+  - 仅单例加 setter 或字段注入有效
+  - 构造器注入用 @Lazy 或重构解决
+  - prototype 不支持循环依赖
+- title: BeanFactory 与 FactoryBean 的本质区别
+  content: BeanFactory 是 Spring 的底层容器接口，负责 Bean 的注册、getBean 获取与生命周期管理，是造 Bean 的工厂，也是 ApplicationContext
+    的父接口。FactoryBean 是容器里一个特殊的 Bean，getObject() 返回的对象才是真正暴露给容器的实例，用于封装复杂构建；MyBatis 的 SqlSessionFactoryBean
+    是经典实现，getBean 用 & 前缀才能拿到它本身。一句话：前者是容器，后者是容器里会生产 Bean 的 Bean。
+  points:
+  - BeanFactory 是容器，FactoryBean 是特殊 Bean
+  - getObject() 的返回值才暴露给容器
+  - getBean 加 & 前缀拿 FactoryBean 自身
+- title: ApplicationContext 对 BeanFactory 的增强
+  content: ApplicationContext 继承 BeanFactory 的容器能力，并叠加企业级特性：事件发布监听、国际化 MessageSource、统一资源加载、环境抽象 Environment、启动时自动注册
+    BeanPostProcessor。加载策略也不同：BeanFactory 懒加载按需初始化，ApplicationContext 默认启动预实例化所有单例，提前暴露配置问题。面试中两者对比常与
+    FactoryBean 辨析一起出现。
+  points:
+  - 事件、国际化、资源加载、环境抽象四大增强
+  - 启动自动注册 BeanPostProcessor
+  - 默认预实例化单例，问题早暴露
+- title: 常用事务传播行为及语义
+  content: REQUIRED 是默认值，当前有事务就加入，没有就新建；REQUIRES_NEW 挂起当前事务另开新事务，两边独立提交回滚，适合操作日志这类业务回滚也要保留的场景；NESTED 在当前事务内建
+    savepoint，外层回滚带动内层，内层回滚不影响外层；SUPPORTS、NOT_SUPPORTED、MANDATORY、NEVER 表达跟随或禁止已有事务的语义。传播行为由 AOP 代理在方法进入时决策，是声明式事务的核心配置项。
+  points:
+  - REQUIRED 默认，有则加入无则新建
+  - REQUIRES_NEW 独立提交回滚互不影响
+  - NESTED 基于 savepoint 可部分回滚
+- title: '@Transactional 失效场景清单'
+  content: 事务靠 AOP 代理实现，一切绕过代理的写法都失效：方法非 public 时代理不织入；同类 this 自调用绕过代理，是最经典的一类；异常被 try-catch 吞掉，切面感知不到就不会回滚；默认只对
+    RuntimeException 和 Error 回滚，抛受检异常需配置 rollbackFor 为 Exception.class；数据库引擎为 MyISAM 不支持事务；事务上下文绑定 ThreadLocal
+    连接，子线程不在同一事务；Bean 未被 Spring 管理或传播行为用了 NOT_SUPPORTED 同样失效。
+  points:
+  - 自调用、非 public、异常被吞是三大经典
+  - 默认只回滚 RuntimeException 与 Error
+  - 多线程子事务不在同一连接上下文
+- title: 同类自调用失效的三种解法
+  content: 同一个类里方法 A 直接调用带 @Transactional 的方法 B，this 引用指向原始对象而非代理，事务不生效。解法一：把 B 拆到另一个 Bean，让调用走代理；解法二：注入自身代理，通过
+    @Lazy 注入 self 或 AopContext.currentProxy()（需 exposeProxy 为 true）调用；解法三：放弃声明式改用编程式 TransactionTemplate，在模板回调里执行
+    B 的逻辑。排查时开启 orm 层 DEBUG 日志，观察 begin 与 commit 是否出现即可定位。
+  points:
+  - 拆 Bean 是最干净的重构解法
+  - AopContext 需开启 exposeProxy
+  - TransactionTemplate 适合自调用与异步
+- title: Spring MVC 处理请求的完整链路
+  content: DispatcherServlet 统一收口：HandlerMapping 按 @RequestMapping 表找到 Handler 与拦截器链；拦截器 preHandle 依次执行；HandlerAdapter
+    执行 Controller 方法，参数解析、@RequestBody 反序列化；返回值经 ReturnValueHandler 处理，@ResponseBody 走 Jackson 序列化；之后
+    postHandle 与渲染，afterCompletion 兜底；异常由 @ControllerAdvice 统一处理。
+  points:
+  - HandlerMapping 定位，HandlerAdapter 执行
+  - 拦截器三段回调贯穿前后
+  - 异常统一出口在 @ControllerAdvice
+- title: 拦截器与过滤器的分层差异
+  content: Filter 是 Servlet 规范组件，包在 DispatcherServlet 外面，拦截一切请求；Interceptor 是 Spring MVC 机制，只拦进入 Handler
+    的请求，顺序为 Filter、Servlet、Interceptor、Controller。Filter 拿不到 Handler 上下文，其异常到不了 @ControllerAdvice；拦截器可读取方法注解做细粒度控制。分工惯例：Filter
+    做编码、CORS、traceId 等协议级事务，Interceptor 做登录态、权限点等业务级校验。
+  points:
+  - Filter 在容器层，Interceptor 在 MVC 层
+  - Filter 异常进不了全局异常处理
+  - 协议级用 Filter，业务级用 Interceptor
+- title: Bean 作用域与单例有状态问题
+  content: 常用作用域有 singleton（默认，容器级单例）、prototype（每次获取新实例，容器不管理其销毁）以及 Web 场景的 request、session、application、websocket。单例被所有请求共享，可变成员变量就是并发事故之源——计数错乱、请求串数据；解法是把
+    Bean 设计成无状态，状态放方法参数、ThreadLocal 或外部存储，必要时用原子类加同步。prototype 注入 singleton 只会注入一次，失去每次新建的意义，可用 ObjectProvider
+    延迟获取。
+  points:
+  - singleton 默认，prototype 每取每新
+  - 单例可变成员变量是并发事故之源
+  - prototype 依赖 singleton 用 ObjectProvider
+- title: '@Autowired 与 @Resource 的装配规则'
+  content: '@Autowired 是 Spring 注解，先按类型匹配，多个候选时再用名称、@Qualifier 或 @Primary 消歧；@Resource 是 JDK 标准注解，先按名称匹配，找不到再退回按类型。选型上字段注入用
+    @Resource 名字即语义更精准，而构造器注入配合 @Autowired 是最佳实践——可写 final、依赖显式、测试友好。注入失败的常见排查点：包不在扫描范围、接口多实现未指定、条件装配被用户
+    Bean 抢注、CGLIB 代理类型与声明类型不匹配。'
+  points:
+  - Autowired 先按类型，Resource 先按名称
+  - 字段注入是反模式，构造器注入最佳
+  - 失败排查从扫描范围与多实现入手
+- title: Spring 事件机制与事务事件
+  content: 事件机制是容器内的发布订阅解耦：ApplicationEventPublisher 发布事件，@EventListener 监听，属于进程级通信而非 MQ。监听方法加 @Async
+    即异步执行；@TransactionalEventListener 可指定在事务提交前、提交后或回滚后触发，解决事件处理依赖事务数据可见性的经典问题——订单创建事件必须等订单落库后再消费。边界要清楚：进程内事件不保证可靠投递，异步异常无重试，宕机即丢，要求可靠性必须上
+    MQ。
+  points:
+  - 容器内发布订阅，不是消息队列
+  - AFTER_COMMIT 解决数据可见性问题
+  - 不保证可靠投递，可靠性靠 MQ
+- title: '@Validated 与 @Valid 的分工'
+  content: '@Valid 是 JSR-380 标准注解，支持嵌套级联校验但不支持分组；@Validated 是 Spring 增强，支持分组且可用于类上做方法级校验，但默认不级联。组合用法：Controller
+    用 @Valid 校验嵌套 DTO，新增与修改规则不同时用 @Validated 指定分组，Service 层方法校验在类上标 @Validated。统一出口是 @RestControllerAdvice
+    捕获 MethodArgumentNotValidException，拼接字段错误返回结构化信息，不能裸抛给前端。'
+  points:
+  - Valid 级联校验，Validated 支持分组
+  - 分组解决新增与修改规则不同
+  - 统一异常出口返回友好错误结构
+- title: 多切面执行顺序由 @Order 控制
+  content: 多个切面按 @Order 数值从小到大形成责任链，值越小优先级越高越靠外层，未标注时顺序不确定。执行模型是高优先级切面的 @Around 前半段先走，再依次进入低优先级切面，最终执行目标方法，之后按逆序返回，@After
+    系列在最内层逆序执行。典型分层是日志切面在最外、事务切面居中、幂等限流切面贴近目标。经典坑：自定义切面包在事务外层时，proceed 抛出的异常发生在事务回滚之后，行为容易误判。
+  points:
+  - '@Order 值越小越靠外层'
+  - 执行呈责任链，返回按逆序
+  - 日志在外、事务居中、幂等贴目标
+- title: Spring Boot 自动装配全链路
+  content: '@SpringBootApplication 聚合 @ComponentScan 与 @EnableAutoConfiguration。自动装配核心是 AutoConfigurationImportSelector：读取各
+    jar 的 imports 文件拿到候选配置类，再由条件注解（@ConditionalOnClass 等）按需过滤，@ConfigurationProperties 绑定 yml。引入 starter
+    即自动装配，这就是约定优于配置。'
+  points:
+  - EnableAutoConfiguration 是装配入口
+  - imports 文件 2.7 前是 spring.factories
+  - 条件注解按需过滤实现约定优于配置
+- title: 自定义 starter 的三要素
+  content: 自定义 starter 三件事：写自动配置类用 @Bean 注册 Bean，属性绑定用 @ConfigurationProperties；条件注解控制边界，@ConditionalOnClass
+    保证依赖存在才装配，@ConditionalOnMissingBean 保证用户自定义优先；在 META-INF/spring 的 AutoConfiguration.imports 登记配置类后打包发布，引入即生效。排查时加
+    --debug 启动，Conditions Evaluation Report 列出每个配置类生效与否及原因。
+  points:
+  - 自动配置类加条件注解加 imports 登记
+  - MissingBean 保证用户配置优先
+  - --debug 查看条件评估报告
