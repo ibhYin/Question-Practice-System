@@ -31,10 +31,33 @@ LOCK_TTL = 2 * 3600
 HOT_KEY = "question:hot"
 STATS_KEY = "stats:category"
 
-# 异步评分：2 个后台 worker，按场次登记 future，结束时等待收口
+# 异步评分：2 个后台 worker，按场次登记 future，结束时限期收口（未完成的稍后自然写回，复盘可见）
 _scoring_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scoring")
 _scoring_futures: dict[int, list] = {}
 _scoring_lock = threading.Lock()
+FINISH_WAIT_SEC = 30  # 结束面试时等待评分收口的总时长上限
+
+
+def _wait_session_scoring(sid: int, max_wait: float = FINISH_WAIT_SEC) -> tuple[int, int]:
+    """限期等待该场次评分收口：单一截止时间，到点即停但**不取消**——
+    后台评分继续跑、完成后写回记录（复盘稍后拉取即见分数）。
+    返回 (已完成, 未完成)。"""
+    with _scoring_lock:
+        futures = _scoring_futures.pop(sid, [])
+    if not futures:
+        return len(futures), 0
+    deadline = time.time() + max_wait
+    done = 0
+    for f in futures:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            continue  # 不取消：让后台自然完成并写回
+        try:
+            f.result(timeout=remaining)
+            done += 1
+        except Exception:
+            pass
+    return done, len(futures) - done
 
 
 def _skey(sid: int) -> str:
@@ -375,14 +398,12 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
     if not session:
         raise BizError("面试场次不存在", 404)
 
-    # 等待本场次的异步评分收口，保证总评完整（超时 90s 后按已出分数计算）
-    with _scoring_lock:
-        futures = _scoring_futures.pop(sid, [])
-    for f in futures:
-        try:
-            f.result(timeout=90)
-        except Exception:
-            pass
+    # 限期收口（30s）：未评完的稍后由后台自然写回，复盘中可见
+    done_scoring, pending_scoring = _wait_session_scoring(sid)
+    # 后台评分线程用独立 session 提交分数——结束当前请求的读事务（快照），
+    # 否则 REPEATABLE READ 下本请求看不到刚提交的分数，总分会算成 None
+    db.commit()
+    db.expire_all()
 
     if session.status == "in_progress":
         answers = (
@@ -428,6 +449,8 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
 
         session.status = "abandoned" if abandoned else "finished"
         session.finished_at = datetime.now()
+        if pending_scoring:
+            session.summary = (session.summary or "") + f"\n\n⏳ {pending_scoring} 题评分仍在后台进行，稍后在复盘中刷新可见。" if session.summary else f"⏳ {pending_scoring} 题评分仍在后台进行，稍后在复盘中刷新可见。"
         db.commit()
         # 面完一场 = 数据变化峰值，触发智能备份（24h 内自动去重）
         maybe_backup()
@@ -436,7 +459,7 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
     rdb.delete(_skey(sid))
     if rdb.get(LOCK_KEY) == str(sid):
         rdb.delete(LOCK_KEY)
-    return {"session_id": sid, "status": session.status}
+    return {"session_id": sid, "status": session.status, "pending_scores": pending_scoring}
 
 
 def get_state_or_rebuild(db: DBSession, session: InterviewSession) -> dict:

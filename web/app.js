@@ -175,6 +175,8 @@ const InterviewView = {
       chatSending: false,
       chatOpen: true,        // 追问面板展开状态
       chatLoaded: {},        // qid -> true（已从服务端加载过）
+      finishing: false,      // 总评生成中（等待评分收口与总结）
+      pendingScores: 0,      // 总评页提示：仍在后台评分的题数
       framework: null,       // 本题知识框架 {qid, framework, cached}
       fwLoading: false,
       fwOpen: true,          // 知识框架展开状态
@@ -435,12 +437,15 @@ const InterviewView = {
     }
 
     async function finish() {
+      state.finishing = true; state.error = '';
       try {
-        await api(`/interviews/${props.sessionId}/finish`, { method: 'POST' });
+        const fr = await api(`/interviews/${props.sessionId}/finish`, { method: 'POST' });
+        state.pendingScores = fr.pending_scores || 0;
       } catch (e) { /* 忽略，接着拉详情 */ }
       const detail = await api(`/interviews/${props.sessionId}`);
       state.summary = detail;
       state.phase = 'summary';
+      state.finishing = false;
       emit('finished');
     }
 
@@ -546,7 +551,9 @@ const InterviewView = {
         <div class="answer-actions">
           <button v-if="state.result.revisiting" class="btn primary" @click="nextQuestion">← 回到当前题目</button>
           <template v-else>
-            <button class="btn primary" @click="nextQuestion">{{ state.result.finished ? '查看本场总评 →' : '下一题 →' }}</button>
+            <button v-if="state.result.finished && !state.finishing" class="btn primary" @click="nextQuestion">查看本场总评 →</button>
+            <button v-else-if="state.result.finished && state.finishing" class="btn primary" disabled>正在生成总评…（收口评分与总结，约需 30 秒）</button>
+            <button v-else class="btn primary" @click="nextQuestion">下一题 →</button>
             <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
             <span v-if="state.addedReview" class="badge ok" style="align-self:center">已加入错题本，明天复习</span>
           </template>
@@ -604,6 +611,9 @@ const InterviewView = {
         <div class="score-row">
           <div>
             <h3 style="font-size:18px">面试结束 · {{ state.summary.position }}</h3>
+            <div v-if="state.pendingScores > 0" class="prev-attempt" style="margin-top:8px">
+              ⏳ {{ state.pendingScores }} 题评分仍在后台进行——稍后到「复盘」里刷新即可看到分数，不影响本页总评。
+            </div>
             <span class="hint">{{ state.summary.question_count }} 题 · {{ fmtTime(state.summary.started_at) }}</span>
           </div>
           <div v-if="state.summary.total_score != null" class="score-big" :class="scoreClass(state.summary.total_score)" style="margin-left:auto;font-size:30px">
