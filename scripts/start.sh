@@ -3,15 +3,17 @@
 set -e
 cd "$(dirname "$0")/.."
 
-# 确保 MySQL/Redis 在运行
+# 确保容器引擎在运行。本机引擎为 OrbStack（已替代 Docker Desktop，数据在外置盘）：
+# 任意 docker 命令都会自动秒级拉起引擎，这里显式等待就绪即可。
 if ! docker info >/dev/null 2>&1; then
-    echo "Docker 未运行，正在启动..."
-    open -a Docker
-    for i in $(seq 1 60); do
+    echo "启动容器引擎（OrbStack）..."
+    orb start 2>/dev/null || true
+    for i in $(seq 1 30); do
         if docker info >/dev/null 2>&1; then break; fi
-        sleep 2
+        sleep 1
     done
 fi
+docker info >/dev/null 2>&1 || { echo "容器引擎启动失败，请检查 OrbStack"; exit 1; }
 docker compose up -d
 
 APP_PORT=$(grep '^APP_PORT=' .env | cut -d= -f2 || echo 8000)
