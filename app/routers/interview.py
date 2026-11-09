@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 from .. import interview as interview_svc
 from ..database import get_db
 from ..errors import BizError
-from ..llm import is_enabled
+from ..llm import is_enabled, _chat as llm_chat
 from ..models import InterviewAnswer, InterviewSession, Question
 from ..schemas import (
     AnswerDetail,
@@ -144,6 +144,96 @@ def session_questions(sid: int, db: DBSession = Depends(get_db)):
         "items": items,
         "answered_count": answered_count,
     }
+
+
+@router.get("/{sid}/answers/{qid}/chat")
+def get_chat(sid: int, qid: int, db: DBSession = Depends(get_db)):
+    """该题的 AI 追问历史（持久化，刷新/切题/重访不丢）+ 题目上下文"""
+    from ..models import ChatMessage
+
+    session = db.get(InterviewSession, sid)
+    if not session:
+        raise BizError("面试场次不存在", 404)
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    ans = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == qid)
+        .first()
+    )
+    msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == sid, ChatMessage.question_id == qid)
+        .order_by(ChatMessage.id)
+        .all()
+    )
+    return {
+        "messages": [{"role": m.role, "content": m.content} for m in msgs],
+        "context": {
+            "question_title": q.title,
+            "model_answer": ans.model_answer if ans else q.model_answer,
+            "user_answer": ans.user_answer if ans else "",
+        },
+    }
+
+
+@router.post("/{sid}/answers/{qid}/chat")
+def post_chat(sid: int, qid: int, body: dict, db: DBSession = Depends(get_db)):
+    """发送一条追问：落库 → LLM 回复 → 落库 → 返回回复"""
+    from ..models import ChatMessage
+
+    if not is_enabled():
+        raise BizError("AI 追问需要先在设置中配置 LLM")
+    content = str(body.get("content", "")).strip()
+    if not content:
+        raise BizError("追问内容不能为空")
+    if len(content) > 1000:
+        content = content[:1000]
+
+    session = db.get(InterviewSession, sid)
+    if not session:
+        raise BizError("面试场次不存在", 404)
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    ans = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == qid)
+        .first()
+    )
+
+    history = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == sid, ChatMessage.question_id == qid)
+        .order_by(ChatMessage.id.desc())
+        .limit(20)
+        .all()
+    )
+    history.reverse()
+
+    system = (
+        "你是这场模拟面试的复盘教练。候选人刚答完一道题，现在针对这道题向你追问。"
+        "回答要求：紧扣这道题的知识点、结合候选人的实际回答（哪里没说到点子上就直接指出）、"
+        "简洁分点、中文。不要复述题目。\n\n"
+        f"【面试题】{q.title}\n"
+        f"【满分答案】\n{(ans.model_answer if ans else q.model_answer) or '（略）'}\n"
+        f"【候选人的回答】\n{(ans.user_answer if ans else '') or '（跳过未答）'}"
+    )
+    messages = [{"role": "system", "content": system}]
+    for m in history:
+        messages.append({"role": m.role, "content": m.content})
+    messages.append({"role": "user", "content": content})
+
+    try:
+        reply = llm_chat(messages, temperature=0.5)
+    except Exception as e:
+        raise BizError(f"AI 回复失败：{type(e).__name__}，请稍后重试")
+
+    db.add(ChatMessage(session_id=sid, question_id=qid, role="user", content=content))
+    db.add(ChatMessage(session_id=sid, question_id=qid, role="assistant", content=reply))
+    db.commit()
+    return {"reply": reply.strip()}
 
 
 @router.get("/{sid}/answers/{qid}/score")

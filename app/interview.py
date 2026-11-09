@@ -21,7 +21,7 @@ from .analysis import invalidate_weakness_cache
 from .backup import maybe_backup
 from .database import SessionLocal
 from .errors import BizError
-from .models import InterviewAnswer, InterviewSession, Question
+from .models import ChatMessage, InterviewAnswer, InterviewSession, Question
 from .question_bank import SERVE_RECENT_KEY
 from .redis_client import rdb
 
@@ -567,5 +567,20 @@ def export_markdown(db: DBSession, sid: int) -> str:
                 lines += [f"**AI 点评**：{a.ai_comment}", ""]
         else:
             lines += ["（未作答）", ""]
+        # 追问与解答（独立于作答状态——REVIEW 场次可能只追问未作答）
+        chats = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == sid, ChatMessage.question_id == qid)
+            .order_by(ChatMessage.id)
+            .all()
+        )
+        if chats:
+            lines += ["**追问与解答**：", ""]
+            for m in chats:
+                prefix = "问：" if m.role == "user" else "答："
+                lines += [f"- {prefix}{m.content}", ""]
+        # 知识框架
+        if q.framework:
+            lines += ["**知识框架**：", "", q.framework, ""]
         lines += ["---", ""]
     return "\n".join(lines)

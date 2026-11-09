@@ -280,6 +280,15 @@ code.inline { background: #f1f3f9; border-radius: 6px; padding: 2px 8px; font-si
 .q-nav-btn.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
 .q-nav-btn.locked { opacity: .35; cursor: not-allowed; }
 
+/* ===== 知识框架面板 ===== */
+.fw-panel { margin-top: 16px; border: 1px solid #dfe4ff; border-radius: 10px; overflow: hidden; }
+.fw-head {
+  display: flex; align-items: center; padding: 10px 14px; background: #f6f8ff;
+  font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink);
+}
+.fw-head:hover { background: #eef1ff; }
+.fw-body { padding: 12px 14px; border-top: 1px solid #dfe4ff; }
+
 /* ===== AI 追问面板 ===== */
 .chat-panel { margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .chat-head {

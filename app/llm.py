@@ -274,6 +274,40 @@ def generate_variants(tag: str, category: str, base_titles: list[str], n: int) -
     return data.get("questions", [])
 
 
+# ---------- 知识框架（每题树状大纲） ----------
+
+FRAMEWORK_SYSTEM = (
+    "你是技术知识体系架构师。给定一道面试题、满分答案要点、以及候选人的历史作答证据，"
+    "请输出这道题的知识框架——树状大纲，把这道题放进完整的知识体系里："
+    "懂什么才能答好它、答题的骨架、面试官会往哪里追问、它与哪些知识相邻。"
+    "用 Markdown 嵌套列表输出，总长 600 字内，不要开场白。"
+)
+
+
+def generate_framework(title: str, model_answer: str, evidence: list[dict], tags: list[str]) -> str:
+    ev_lines = []
+    for e in evidence[:3]:
+        ev_lines.append(f"- 候选人作答（{e.get('score', '未评')} 分）：{str(e.get('user_answer', ''))[:200]}")
+    ev_text = "\n".join(ev_lines) if ev_lines else "（暂无作答记录）"
+    user = (
+        f"面试题：{title}\n"
+        f"知识点标签：{'、'.join(tags or [])}\n"
+        f"满分答案要点：\n{model_answer[:1200] or '（略）'}\n\n"
+        f"候选人历史作答：\n{ev_text}\n\n"
+        "请输出如下结构（嵌套列表，每项一句话）：\n"
+        "**本题核心**：一句话\n"
+        "- 前置知识\n  - …（2~3 条，不懂这些就答不好本题）\n"
+        "- 答题骨架\n  - …（3~5 条，按得分点组织）\n"
+        "- 易错点与追问方向\n  - …（2~4 条，面试官最可能深挖的地方）\n"
+        "- 延伸关联\n  - …（2~3 条相邻知识点，标注与本题的关系）"
+    )
+    return _chat(
+        [{"role": "system", "content": FRAMEWORK_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.3,
+        timeout=120,
+    ).strip()
+
+
 # ---------- 知识关联 ----------
 
 LINK_SYSTEM = (

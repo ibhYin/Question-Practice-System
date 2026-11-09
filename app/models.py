@@ -23,6 +23,7 @@ class Question(Base):
     model_answer: Mapped[str] = mapped_column(Text, default="")  # 满分答案
     related_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 知识关联题 id（知识地图边）
     card_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 关联八股卡 id（答题时给出知识点）
+    framework: Mapped[str | None] = mapped_column(Text, nullable=True)  # 知识框架（LLM 懒生成缓存）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, onupdate=datetime.now
@@ -102,6 +103,22 @@ class StudyCard(Base):
     # new 未学 / learning 待巩固 / mastered 已背熟
     status: Mapped[str] = mapped_column(String(16), default="new")
     source: Mapped[str] = mapped_column(String(16), default="BUILTIN")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class ChatMessage(Base):
+    """AI 追问记录：答题结果页的问答对话（持久化，复盘/导出可查）"""
+
+    __tablename__ = "chat_message"
+    __table_args__ = (
+        Index("ix_chat_session_question", "session_id", "question_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("interview_session.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("question.id"), index=True)
+    role: Mapped[str] = mapped_column(String(16))  # user / assistant
+    content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 

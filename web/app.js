@@ -170,10 +170,14 @@ const InterviewView = {
       sessionQs: [],         // 本场题目导航列表
       answeredCount: 0,
       draftSaved: false,     // 草稿保存微提示
-      chats: {},             // qid -> [{role, content}] AI 追问历史（内存级）
+      chats: {},             // qid -> [{role, content}] AI 追问历史（服务端持久化）
       chatInput: '',
       chatSending: false,
       chatOpen: true,        // 追问面板展开状态
+      chatLoaded: {},        // qid -> true（已从服务端加载过）
+      framework: null,       // 本题知识框架 {qid, framework, cached}
+      fwLoading: false,
+      fwOpen: true,          // 知识框架展开状态
     });
 
     function startTimer() {
@@ -296,6 +300,7 @@ const InterviewView = {
         state.question = null;
         state.phase = 'result';
         loadKnowledge(qid);
+        loadChat(qid);
       } else {
         // 可答未答题 → 答题视图（恢复草稿 + 上次作答提示）
         const p = await api(`/interviews/${props.sessionId}/progress`);
@@ -310,36 +315,55 @@ const InterviewView = {
       nextTick(enhanceDiagrams);
     }
 
-    /* AI 追问（结果视图内，带题目上下文的多轮对话） */
+    /* AI 追问（结果视图内，持久化到服务端的多轮对话） */
     function chatList() {
       const key = state.result ? state.result.question_id : 0;
       if (!state.chats[key]) state.chats[key] = [];
       return state.chats[key];
+    }
+    async function loadChat(qid) {
+      if (state.chatLoaded[qid]) return;
+      try {
+        const d = await api(`/interviews/${props.sessionId}/answers/${qid}/chat`);
+        state.chats[qid] = d.messages;
+        state.chatLoaded[qid] = true;
+      } catch (e) { /* 忽略 */ }
     }
     async function sendChat() {
       const q = state.chatInput.trim();
       if (!q || state.chatSending || !state.result) return;
       if (!state.llmEnabled) { state.error = 'AI 追问需要先在「设置」中配置 LLM'; return; }
       state.chatSending = true; state.error = '';
+      const qid = state.result.question_id;
       const history = chatList();
       history.push({ role: 'user', content: q });
       state.chatInput = '';
       try {
-        const r = await api('/analysis/ask', {
+        const r = await api(`/interviews/${props.sessionId}/answers/${qid}/chat`, {
           method: 'POST',
-          body: {
-            messages: history.map(m => ({ role: m.role, content: m.content })),
-            question_title: state.result.revisiting ? '' : (state.question ? state.question.title : ''),
-            model_answer: state.result.model_answer,
-            user_answer: state.result.user_answer,
-          },
+          body: { content: q },
         });
         history.push({ role: 'assistant', content: r.reply });
-        nextTick(enhanceDiagrams);
       } catch (e) {
         history.push({ role: 'assistant', content: `⚠️ ${e.message}` });
       }
       state.chatSending = false;
+      nextTick(enhanceDiagrams);
+    }
+
+    /* 本题知识框架（懒生成，缓存于题库） */
+    async function loadFramework() {
+      if (!state.result) return;
+      const qid = state.result.question_id;
+      state.fwLoading = true;
+      try {
+        const r = await api(`/questions/${qid}/framework`, { method: 'POST', body: {} });
+        state.framework = { qid, framework: r.framework, cached: r.cached };
+      } catch (e) { state.error = e.message; }
+      state.fwLoading = false;
+    }
+    function frameworkVisible() {
+      return state.framework && state.result && state.framework.qid === state.result.question_id;
     }
     function openRelated(k) {
       state.relatedDetail = k;   // k 含 title/category_name/model_answer
@@ -380,6 +404,7 @@ const InterviewView = {
         state.phase = 'result';
         if (r.scoring) pollScore();   // 异步评分：立即展示对比，分数轮询补显
         loadKnowledge(r.question_id); // 后台拉关联考点，不阻塞展示
+        loadChat(r.question_id);      // 追问历史（服务端持久化）
         loadSessionQs();              // 刷新题号导航（答题状态变化）
         nextTick(enhanceDiagrams);
       } catch (e) { state.error = e.message; }
@@ -428,7 +453,7 @@ const InterviewView = {
     onMounted(() => { loadProgress(); loadSessionQs(); });
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, sendChat, chatList, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, loadChat, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, sendChat, chatList, loadFramework, frameworkVisible, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -527,10 +552,30 @@ const InterviewView = {
           </template>
         </div>
 
-        <!-- 💬 AI 追问：提交/跳过后直接向 AI 提问 -->
+        <!-- 🗺 本题知识框架（懒生成，缓存于题库） -->
+        <div class="fw-panel">
+          <div class="fw-head" @click="state.fwOpen = !state.fwOpen">
+            🗺 本题知识框架
+            <span class="hint" style="margin-left:8px">前置知识 · 答题骨架 · 易错与追问方向 · 延伸关联</span>
+            <span style="margin-left:auto">{{ state.fwOpen ? '▾' : '▸' }}</span>
+          </div>
+          <div v-show="state.fwOpen" class="fw-body">
+            <div v-if="frameworkVisible()">
+              <div class="doc-body" v-html="renderAnswer(state.framework.framework)"></div>
+            </div>
+            <div v-else style="padding:8px 0">
+              <button class="btn" :disabled="state.fwLoading" @click="loadFramework">
+                {{ state.fwLoading ? '知识框架生成中…（约 1-2 分钟）' : '🗺 生成本题知识框架' }}</button>
+              <span v-if="state.framework && state.framework.qid === (state.result && state.result.question_id) && state.framework.error" class="error" style="margin-left:10px">{{ state.framework.error }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 💬 AI 追问：提交/跳过后直接向 AI 提问（记录持久化，刷新不丢） -->
         <div class="chat-panel">
           <div class="chat-head" @click="state.chatOpen = !state.chatOpen">
             💬 追问 AI（针对本题的疑问，如"为什么这里用间隙锁？"）
+            <span class="hint" style="margin-left:8px">记录已保存，随时回看</span>
             <span style="margin-left:auto">{{ state.chatOpen ? '▾' : '▸' }}</span>
           </div>
           <div v-show="state.chatOpen" class="chat-body">

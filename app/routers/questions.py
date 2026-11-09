@@ -145,6 +145,45 @@ def knowledge_map(category: str = "", db: DBSession = Depends(get_db)):
     return {"nodes": nodes, "links": links, "categories": sorted({q.category for q in questions})}
 
 
+@router.get("/{qid}/framework")
+def get_framework(qid: int, db: DBSession = Depends(get_db)):
+    """读取本题知识框架（未生成则返回 null，前端提示可生成）"""
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    return {"question_id": qid, "framework": q.framework or None}
+
+
+@router.post("/{qid}/framework")
+def gen_framework(qid: int, db: DBSession = Depends(get_db)):
+    """懒生成本题知识框架（前置→骨架→易错→延伸 的树状大纲），生成后缓存"""
+    from .. import llm
+    from ..analysis import compute_weakness
+
+    q = db.get(Question, qid)
+    if not q:
+        raise BizError("题目不存在", 404)
+    if q.framework:
+        return {"question_id": qid, "framework": q.framework, "cached": True}
+    if not llm.is_enabled():
+        raise BizError("知识框架生成需要先在设置中配置 LLM")
+
+    # 该题的历史作答作为证据（弱项针对性）
+    weakness = compute_weakness(db)
+    node = next((n for n in weakness["all_points"] if n["tag"] in (q.tags or [])), None)
+    evidence = node["evidence"][:3] if node else []
+
+    try:
+        fw = llm.generate_framework(q.title, q.model_answer, evidence, q.tags)
+    except Exception as e:
+        raise BizError(f"知识框架生成失败：{type(e).__name__}，请稍后重试")
+    if not fw:
+        raise BizError("知识框架生成为空，请重试")
+    q.framework = fw
+    db.commit()
+    return {"question_id": qid, "framework": fw, "cached": False}
+
+
 @router.get("/{qid}/cards")
 def question_cards(qid: int, db: DBSession = Depends(get_db)):
     """该题关联的八股知识点卡（答题结果页展示"背哪几张卡能答好这类题"）"""
