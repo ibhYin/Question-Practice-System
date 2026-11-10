@@ -132,6 +132,7 @@ def session_questions(sid: int, db: DBSession = Depends(get_db)):
                 "title": q.title,
                 "category": q.category,
                 "difficulty": q.difficulty,
+                "tags": q.tags,
                 "answered": a is not None,
                 "score": a.score if a else None,
             }

@@ -279,6 +279,8 @@ const InterviewView = {
       const n = state.answeredCount || 0;
       return new Set(state.sessionQs.filter(i => i.seq <= n + 1).map(i => i.id));
     });
+    // 结果视图的题目 meta（标题/分类/难度/标签），提交与回看共用
+    const resultQ = computed(() => (state.result ? state.sessionQs.find(i => i.id === state.result.question_id) || null : null));
     async function gotoQuestion(qid) {
       if (!unlockedIds.value.has(qid) || state.submitting) return;
       saveDraft();               // 切走前保存当前草稿（按题隔离，互不影响）
@@ -458,7 +460,7 @@ const InterviewView = {
     onMounted(() => { loadProgress(); loadSessionQs(); });
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, loadChat, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, sendChat, chatList, loadFramework, frameworkVisible, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, loadChat, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, resultQ, sendChat, chatList, loadFramework, frameworkVisible, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -515,6 +517,15 @@ const InterviewView = {
       <div class="progress-wrap">
         <span class="badge">第 {{ state.result.seq }} / {{ state.total }} 题 · 已提交</span>
         <div class="progress-track"><div class="progress-fill" :style="{width: state.result.seq / state.total * 100 + '%'}"></div></div>
+      </div>
+      <!-- 题干卡：提交后保留题目可见（与答题页同款） -->
+      <div class="card q-card" v-if="resultQ">
+        <div class="q-meta">
+          <span class="badge">{{ CATEGORY_NAMES[resultQ.category] || resultQ.category }}</span>
+          <span class="badge" :class="DIFF_COLOR[resultQ.difficulty]">难度·{{ DIFF_LABEL[resultQ.difficulty] }}</span>
+          <span v-for="t in (resultQ.tags || [])" :key="t" class="badge gray">{{ t }}</span>
+        </div>
+        <div class="q-title">{{ resultQ.title }}</div>
       </div>
       <div class="card result-panel">
         <div class="score-row">
