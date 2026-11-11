@@ -36,10 +36,11 @@
 .venv/bin/python -m scripts.build_question_card_links --llm  # 重建题↔八股卡映射
 ```
 
-## 数据规模与结构（截至 2026-11-09）
+## 数据规模与结构（截至 2026-11-11）
 
-- 面试题库 323 题 / 15 类（MYSQL/REDIS/JAVA/JVM/CONCURRENT/SPRING/NETWORK/SCENARIO/AI_APP/AGENT/FULLSTACK/OS/DISTRIBUTED/ALGO/PYTHON）
-- 八股文库：15 篇体系文档（11 篇含 Mermaid 图）+ 324 张背诵卡
+- 面试题库 345 题 / 15 类（MYSQL/REDIS/JAVA/JVM/CONCURRENT/SPRING/NETWORK/SCENARIO/AI_APP/AGENT/FULLSTACK/OS/DISTRIBUTED/ALGO/PYTHON）；含 SSE/WebSocket 实时通信与 Agent Harness 专题批次（seed/extras_realtime.yaml、extras_harness.yaml）
+- 八股文库：15 篇体系文档（13 篇含 Mermaid 图）+ 342 张背诵卡
+- **八股卡 content 是 YAML 纯标量**：正文里不能出现 ASCII「冒号+空格」（写成 = 或全角：），否则 safe_load 直接炸
 - MySQL 7 张表：question / interview_session / interview_answer / chat_message(AI 追问持久化) / study_doc / study_card / knowledge_pack(每知识点系统知识包)
 - Redis 键：`interview:session:{id}`(进度) / `interview:lock`(全场锁,TTL+自愈) / `review:queue`+`review:stage`(遗忘曲线) / `question:hot`(错题榜) / `cache:bank:{cat}`(抽题池) / `stats:category` / `serve:recent`(出题冷却) / `weakness:cache` / `config:llm`
 

@@ -24,6 +24,8 @@ def main() -> int:
     per_cat: dict[str, int] = {}
 
     for f in sorted(Path(__file__).parent.glob("*.yaml")):
+        if f.name.startswith("study_"):
+            continue  # 八股文库走 seed/check_study.py（顶层结构不同：doc+cards）
         items = yaml.safe_load(f.read_text(encoding="utf-8")) or []
         for item in items:
             cat = item.get("category") or f.stem.upper()

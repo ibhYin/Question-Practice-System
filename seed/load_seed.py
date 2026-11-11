@@ -21,6 +21,8 @@ def main() -> None:
     added, skipped = 0, 0
     try:
         for f in sorted(Path(__file__).parent.glob("*.yaml")):
+            if f.name.startswith("study_"):
+                continue  # 八股文库走 seed/load_study.py（顶层结构不同：doc+cards）
             default_cat = f.stem.upper()  # mysql.yaml -> MYSQL
             items = yaml.safe_load(f.read_text(encoding="utf-8")) or []
             file_added = 0

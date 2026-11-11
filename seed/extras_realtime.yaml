@@ -1,0 +1,191 @@
+# 题库扩充批次：实时通信 SSE / WebSocket + Agent Harness（每题显式 category）
+- title: "SSE 和 WebSocket 怎么选型？各自的适用场景是什么？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["SSE", "WebSocket", "选型"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "frontend", "fullstack"]
+  answer: |
+    1. **本质区别**：SSE（Server-Sent Events）是基于 HTTP 的**单向**推送——服务端到客户端的长连接文本流；WebSocket 是独立协议（RFC 6455）的**双向**全双工通道，先通过 HTTP Upgrade 握手升级。
+    2. **SSE 适合**：只需服务端推送的场景——消息通知、行情/比分推送、监控大盘、LLM 流式输出（ChatGPT、Claude 的 API 都是 SSE）。优势：复用 HTTP 基础设施（鉴权、CDN、代理天然兼容）、协议简单（纯文本 event/data 行）、浏览器原生 EventSource 自带自动重连和断点续传、开销小。
+    3. **WebSocket 适合**：客户端也要高频发消息——聊天室、协同编辑、多人游戏、实时白板。双向低延迟，二进制帧支持，但需要自己处理重连、心跳、鉴权（握手只走一次 HTTP，之后 token 过期就麻烦）。
+    4. **选型口诀**：只要"服务端说、客户端听"就优先 SSE——更简单更省；需要"双向对讲"才上 WebSocket。
+    5. **加分点**：提到 SSE 走 HTTP/2 后多个流复用一条 TCP 连接，缓解浏览器对同域 HTTP/1.1 的 6 连接限制；以及生产中大量"伪双向"需求（打字状态、点赞飘屏）其实用 SSE + 普通 POST 就够，不必为了偶尔的上行开 WebSocket。
+
+- title: "SSE 的报文格式是什么样的？Last-Event-ID 如何实现断线续传？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["SSE", "断线续传", "Last-Event-ID"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "frontend"]
+  answer: |
+    1. **MIME 与报文**：响应头 `Content-Type: text/event-stream` + `Cache-Control: no-cache`（代理环境再加 `X-Accel-Buffering: no`）。报文是纯文本，按**事件块**组织，字段一行一个，空行（两个换行）表示事件结束：
+       ```
+       id: 42
+       event: message
+       data: 第一行
+       data: 第二行
+       retry: 3000
+       ```
+       `data:` 可多行拼接；`id:` 是事件序号；`retry:` 建议客户端重连等待毫秒数；以 `:` 开头的行是注释（常用来做 keep-alive 心跳）。
+    2. **断线续传机制**：服务端每条消息带递增 `id`；连接断开后 EventSource **自动重连**，并把最后收到的 id 放在请求头 `Last-Event-ID` 里带上；服务端据此从消息队列/日志里补发断线期间的事件。
+    3. **服务端职责**：要有"可重放的消息源"——按 id 存储的历史队列（如 Redis List）、或单调游标（如 Kafka offset 语义），收到 Last-Event-ID 就从该位置之后回放，再进入实时推送。
+    4. **陷阱**：id 断了服务端没存历史，重连只能全量重推，客户端要去重；跨实例部署时 Last-Event-ID 只对持有该连接的实例有意义，需要把"补发"也做进共享存储。
+    5. **加分点**：提到 HTTP/2 下 SSE 复用连接、以及把事件 id 设计成业务单调序号（而不是连接内自增），这样实例重启、故障转移后续传依然成立。
+
+- title: "EventSource 的自动重连机制和浏览器连接数限制是怎么回事？"
+  category: NETWORK
+  difficulty: 3
+  tags: ["SSE", "EventSource", "重连"]
+  position_tags: ["java", "backend", "python", "frontend", "fullstack"]
+  answer: |
+    1. **自动重连**：浏览器 EventSource 连接断开（网络抖动、服务端关闭）后默认约 3s 自动重连，服务端可用 `retry:` 字段动态调整；重连请求自动携带 `Last-Event-ID` 头。 readyState 三态：0 连接中 / 1 已打开 / 2 已关闭（2 是服务端明确返回非 200/正确 Content-Type 或调用 close() 后，**不再重连**）。
+    2. **HTTP/1.1 六连接限制**：浏览器对同一域名（HTTP/1.1）最多 6 条 TCP 并发连接，每条 SSE 流长期占一条——同域开第 7 个标签页/流会被挂起，表现为"页面卡住不出数据"。
+    3. **解法**：
+       - **HTTP/2**：多路复用，一条 TCP 上跑无数流，限制问题基本消失（现代浏览器/网关/CDN 默认支持）；
+       - **分流域名**：SSE 单独域名，绕开主站连接占用；
+       - **合并流**：一个页面多个通知源共用一条 SSE，用 `event:` 字段区分类型分发。
+    4. **服务端关闭姿势**：想主动断开且不让客户端重连，要么返回非 text/event-stream 的错误状态（触发 CLOSED），要么客户端自己 close()；只是 close 连接会被当异常断开而重连。
+    5. **加分点**：提到 Node/浏览器外（如 App 内嵌、服务间）没有 EventSource 时的等价实现要点——自己实现指数退避重连 + Last-Event-ID 续传；以及代理（nginx）对长流的 `proxy_read_timeout` 必须大于心跳间隔，否则 60s 默认值会周期性掐断连接。
+
+- title: "服务端实现 SSE 接口有哪些工程要点？nginx 代理场景有哪些坑？"
+  category: NETWORK
+  difficulty: 3
+  tags: ["SSE", "服务端实现", "nginx"]
+  position_tags: ["java", "backend", "python", "golang", "fullstack"]
+  answer: |
+    1. **响应设置**：`Content-Type: text/event-stream`、`Cache-Control: no-cache`、`Connection: keep-alive`；禁用任何压缩变换（nginx 的 gzip 会缓冲破坏流式性）；写完头部后立即 flush，之后每条事件都要即时 flush。
+    2. **心跳保活**：每 15-30s 发一行注释 `: ping\n\n`——防止中间代理判定空闲超时断开，也让服务端能感知连接断开（写失败抛异常）。
+    3. **断开检测**：写事件失败（broken pipe）要捕获并清理订阅资源（Redis subscriber、内存 queue），否则连接对象泄漏、fd 堆积。
+    4. **nginx 三大坑**：
+       - **proxy_buffering 缓冲**：默认会攒够 buffer 才转发，流式变成"憋一段吐一段"——要么响应头加 `X-Accel-Buffering: no`，要么 location 级 `proxy_buffering off`；
+       - **proxy_read_timeout**：默认 60s 无数据就断——心跳间隔必须小于它，或调大该值；
+       - **gzip**：对 event-stream 开 gzip 会缓冲+分块破坏事件边界，直接关掉该类型。
+    5. **框架层**：Spring 用 SseEmitter（注意异步超时与 complete 回调清理）、FastAPI/Flask 用 StreamingResponse/生成器（注意别让框架做整体缓冲）、Node 直接 res.write。
+    6. **加分点**：提到水平扩展下 SSE 连接"钉"在某个实例——广播要靠 Redis pub/sub / Kafka 把消息扇出到所有实例，各实例只推自己持有的连接；以及容器环境（K8s ingress、SLB）同样要检查超时与缓冲配置。
+
+- title: "SSE 是单向的，客户端需要发消息怎么办？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["SSE", "单向通信", "架构设计"]
+  position_tags: ["java", "backend", "python", "frontend", "fullstack"]
+  answer: |
+    1. **标准答案：SSE 下行 + 普通 HTTP 上行**。上行本来就不需要长连接——客户端该发言时发一个 POST/PUT 即可（带 CSRF token、走普通鉴权），服务端处理完把结果/回执通过 SSE 流推下去。LLM 应用全是这个模式：提问走 POST /chat/completions，回答 token 流走 SSE 返回。
+    2. **消息关联**：上行请求里带请求 id（或服务端生成后通过 SSE event 推回），客户端把流里的 data 和自己的请求对上号，避免两条提问的流式回答串台。
+    3. **事件分发**：一个页面有多类推送（通知 + 进度 + 对话）时，共用一条 SSE，用 `event: xxx` 字段分频道，EventSource 用 addEventListener('xxx') 订阅各自频道。
+    4. **什么时候说明该换 WebSocket**：上行也变成高频/低延迟需求（聊天即时已读回执、游戏操作 30ms 级），POST 的连接开销和延迟撑不住，才升级为 WebSocket 双向。
+    5. **加分点**：指出"SSE + POST 是把长连接成本只花在真正需要的一侧"，连接数减半、鉴权复用 HTTP 语义；以及上行和下行通过消息队列/事件总线解耦，服务端无状态化更好扩展。
+
+- title: "WebSocket 的握手过程是怎样的？Sec-WebSocket-Accept 是怎么算的？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["WebSocket", "握手", "Upgrade"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "frontend"]
+  answer: |
+    1. **握手是 HTTP Upgrade**：客户端发一个特殊 HTTP 请求：
+       ```
+       GET /chat HTTP/1.1
+       Upgrade: websocket
+       Connection: Upgrade
+       Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+       Sec-WebSocket-Version: 13
+       ```
+    2. **服务端响应 101 Switching Protocols**：
+       ```
+       HTTP/1.1 101 Switching Protocols
+       Upgrade: websocket
+       Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+       ```
+       之后这条 TCP 连接就从 HTTP 切换为 WebSocket 二进制协议。
+    3. **Accept 的计算**：`base64(sha1(Sec-WebSocket-Key + 魔法串 "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))`。目的不是加密，而是**证明服务端理解 WebSocket 协议**（不是普通 HTTP 服务误答 200），并防止普通 HTTP 代理缓存/中间盒误解析。
+    4. **握手期鉴权**：因为握手就是 HTTP，token 可放 header/cookie/subprotocol；但升级完成后不再有 HTTP 语义，token 过期无法自动续，常见做法是应用层定期 re-auth 消息或干脆短连接重连换新 token。
+    5. **加分点**：提到 Sec-WebSocket-Protocol 子协议协商（客户端提议列表，服务端必须原样回显一个）；以及反向代理必须显式配置 Upgrade 透传（nginx 的 `proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"`），否则握手直接 400。
+
+- title: "WebSocket 帧结构是怎样的？为什么客户端到服务端的帧要掩码？"
+  category: NETWORK
+  difficulty: 3
+  tags: ["WebSocket", "帧结构", "掩码"]
+  position_tags: ["java", "backend", "python", "golang", "cpp"]
+  answer: |
+    1. **帧（frame）头结构**：
+       - FIN + RSV1-3 + opcode（4bit）：opcode 定义帧类型——0x1 文本、0x2 二进制、0x8 关闭、0x9 ping、0xA pong；
+       - MASK 位 + Payload len（7bit / 16bit 扩展 / 64bit 扩展，分级表示 125 / 64K / 更大负载）；
+       - 掩码键 Masking-key（32bit，客户端→服务端必须有）；
+       - 负载数据（被掩码异或处理）。
+    2. **分片**：大消息可拆成多个帧，首帧 FIN=0，opcode 为真实类型；后续帧 opcode=0（continuation），最后一帧 FIN=1——流式发送大文件不用整块缓冲。
+    3. **掩码的目的**：客户端发出的每一帧负载都要用 4 字节掩码键做异或混淆。这是防**缓存投毒攻击**——攻击者构造恶意数据伪装成 HTTP 请求文本，让透明代理误把 WebSocket 流当 HTTP 缓存下来污染用户请求；掩码让中间盒无法把负载当成可预测的明文 HTTP 头。服务端→客户端不掩码（攻击者无法伪造服务端位置，风险不存在）。
+    4. **控制帧限制**：ping/pong/close 的 payload ≤125 字节且必须不分片，可在分片消息中间插入（心跳不被大文件阻塞）。
+    5. **加分点**：提到 RFC 6455 规定 2011 年前代理普遍不识别 Upgrade，掩码是那个年代穿过透明代理的妥协设计；以及粘包/拆包——WebSocket 有帧边界所以不像 TCP 裸写那样需要应用层分包协议。
+
+- title: "WebSocket 的心跳（ping/pong）机制怎么做？会遇到哪些超时问题？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["WebSocket", "心跳", "ping/pong"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "frontend"]
+  answer: |
+    1. **协议层心跳**：RFC 6455 内置 ping（0x9）/pong（0xA）控制帧。一方发 ping，另一方**必须**尽快回 pong（可带同样的 payload 回显）。浏览器 JS 发不了 ping（API 不暴露），但会自动回 pong，所以一般由**服务端定时发 ping** 探活。
+    2. **应用层心跳**：浏览器场景服务端 ping 只能证明 TCP 通、浏览器在线，拿不到 JS 层状态；更彻底的是应用层心跳消息（如 JSON {type:"ping"}），客户端 JS 收到后回 {type:"pong"}，超时未回判定僵尸连接。
+    3. **心跳的三重作用**：探活清僵尸（半开连接对端已死但本地不知）；防止中间设备（LB、nginx、家用路由 NAT）因连接空闲超时回收映射；维持连接表容量可控。
+    4. **超时参数匹配**：心跳间隔必须**小于**链路上最短的超时（nginx proxy_read_timeout 默认 60s、云 LB 空闲超时常见 350-900s、NAT 表项几分钟）——经验值 15-30s 心跳、2-3 次未回踢线。
+    5. **断线重连策略**：指数退避 + 抖动（1s、2s、4s…上限 60s，加随机避免雪崩重连风暴）；重连成功后要重新鉴权 + 拉取断线期间的消息补偿（本地最后 seq 请求服务端补发）。
+    6. **加分点**：提到 ping/pong 是控制帧、不进消息队列、可在分片大消息传输中穿插；以及服务端把"连接"和"会话"分离——连接断了业务会话保留（比如游戏观战位），重连后按 session id 恢复，而不是一切重来。
+
+- title: "如果要支撑百万级 WebSocket 长连接，架构上要怎么设计？"
+  category: NETWORK
+  difficulty: 3
+  tags: ["WebSocket", "高并发架构", "长连接"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "fullstack"]
+  answer: |
+    1. **接入层：网关统一管连接**。独立的 WebSocket 网关集群（Go/Netty/Rust 均可）只做三件事：维持连接、鉴权、消息收发，不碰业务逻辑。业务服务无状态、可随意扩缩容，通过内部 RPC/消息队列与网关交互——连接与业务解耦。
+    2. **单机优化**：C10K 时代早过，单机几十万连接的关键是——epoll/io_uring 事件驱动（NIO）、内存省（每连接 buffer 池化、虚拟内存占位）、fd 上限调优（ulimit）、减少每连接线程（绝不能 thread-per-connection）。Go 协程模型天然占优，Java 用 Netty/虚拟线程。
+    3. **广播扇出：Redis pub/sub 或消息总线**。用户 A 在网关 1，用户 B 在网关 2——A 发的消息进总线，所有网关订阅总线，各推各持有的连接。大规模用 Kafka 分而治之（按会话 hash 到分区），Redis pub/sub 做小规模在线通知。热房间（大 V 直播间百万观众）另做**分层广播**：网关订阅一次、本地内存再，避免每条消息百万人次总线传输。
+    4. **粘性会话（sticky session）**：连接状态（在哪个网关、订阅了哪些房间）要么随连接走（LB 按 user id hash 到固定网关），要么放共享存储（Redis 记录 uid→gateway 映射）。网关宕机时映射失效，客户端重连被 LB 重新分配，靠重连风暴保护（抖动退避）+ 会话恢复协议兜底。
+    5. **可观测与容量**：连接数、心跳超时率、消息积压、每连接内存——四类核心指标；发布要灰度（网关滚动重启会引发重连风暴，需要分批 + 客户端退避配合）。
+    6. **加分点**：提到连接迁移（网关优雅下线前广播"请重连"指令）、以及百万连接下的推送优先级队列（交易消息 > 聊天 > 状态广播），避免低价值广播挤占带宽。
+
+- title: "短轮询、长轮询、SSE、WebSocket 四种实时方案怎么选？"
+  category: NETWORK
+  difficulty: 2
+  tags: ["实时通信", "选型", "长轮询"]
+  position_tags: ["java", "backend", "python", "golang", "cpp", "frontend", "fullstack"]
+  answer: |
+    1. **四种方式一句话**：
+       - **短轮询**：客户端定时 GET（如每 5s）——实现最简单，但延迟=轮询间隔，大部分请求空手而归，浪费连接和 QPS；
+       - **长轮询（long polling）**：服务端 hold 住请求直到有数据或超时（30s）才返回，客户端收到立即再发——延迟接近实时，兼容一切环境（IE、严格代理），代价是服务端要挂起大量请求；
+       - **SSE**：单向 HTTP 长连接流——服务端推、客户端听，自动重连 + 断点续传，文本协议；
+       - **WebSocket**：双向全双工独立协议——最低延迟、二进制支持，成本最高（重连/心跳/网关都要自建）。
+    2. **延迟与开销对比**：延迟 WebSocket ≈ SSE < 长轮询 < 短轮询；服务端开销/复杂度 WebSocket > SSE > 长轮询 > 短轮询。
+    3. **选型决策树**：
+       - 只需要服务端推送、环境现代 → **SSE**（LLM 流式、通知、行情的首选）；
+       - 双向高频 → **WebSocket**（聊天、协作、游戏）；
+       - 兼容性要求苛刻 / 客户端极简 / 需求弱实时（分钟级）→ **轮询**（内部后台系统够用）；
+       - 兼容性苛刻但要近实时 → **长轮询**（早期微信网页版就是它）。
+    4. **降级链**：生产级实时系统常做 feature detect——优先 WebSocket，失败降级 SSE，再降级长轮询（如 Socket.IO 内置这套逻辑）。
+    5. **加分点**：点破"实时性需求值多少钱"——很多产品把弱实时需求过度设计成 WebSocket，运维成本翻倍；反过来 LLM 应用普遍 SSE 是因为响应是单向流（生成 token 只往下游），天然贴合 SSE 语义。
+
+- title: "LLM 应用为什么普遍用 SSE 做流式输出，而不用 WebSocket？"
+  category: AI_APP
+  difficulty: 2
+  tags: ["SSE", "LLM", "流式输出"]
+  position_tags: ["ai_app", "agent", "backend", "python", "fullstack"]
+  answer: |
+    1. **交互是单向流**：LLM 对话的请求（prompt）在开始就发完了，生成过程中只有服务端往客户端吐 token——本质是"一问一答"里的答很长。SSE 的单向模型刚好贴合，WebSocket 的双向能力完全用不上，属于白付复杂度。
+    2. **复用 HTTP 生态**：SSE 就是普通 HTTP 响应——鉴权（Bearer header）、网关、CDN、负载均衡、重试语义、错误码（401/429/500）全部现成。WebSocket 升级后脱离 HTTP 语义，鉴权续期、错误传递、代理配置都要重新造轮子。
+    3. **无状态更易扩展**：一次流式回答 = 一个 HTTP 请求，自然获得负载均衡、超时控制、Serverless 兼容（边缘函数/Lambda 响应流）。WebSocket 长连接在 Serverless/自动扩缩容环境下是硬伤（连接钉在实例上）。
+    4. **OpenAI 等事实标准**：ChatGPT API、Claude API、Gemini API 的 stream 都用 SSE（`data: {...}` + `data: [DONE]` 结束标记），客户端生态（SDK、代理、观测工具）都围绕它建设，跟随标准成本最低。
+    5. **什么时候 LLM 应用才需要 WebSocket**：双向实时语音流（全双工音频进出，如 Realtime API 场景）、多人在同一会话协作（白板+AI）、客户端要高频打断/改写进行中的生成。
+    6. **加分点**：提到 SSE 流里的错误处理——中途出错时在 `data:` 里发一个 error 事件对象（或 HTTP 层提前断开+客户端识别），以及给每段输出配 usage/finish_reason 帧做计费与归因；上游超时/限流时对客户端 SSE 通道做优雅降级（转非流式一次性返回）。
+
+- title: "SSE 流式输出在服务端聚合层（BFF/网关）怎么做？多个 LLM 上游怎么统一？"
+  category: AI_APP
+  difficulty: 3
+  tags: ["SSE", "LLM网关", "BFF"]
+  position_tags: ["ai_app", "agent", "backend", "fullstack"]
+  answer: |
+    1. **场景**：业务后端（BFF）调多个 LLM 上游（OpenAI/DeepSeek/自部署 vLLM），前端只对接 BFF 的统一 SSE 接口——上游差异（事件格式、错误码、结束标记、限流语义）在聚合层抹平。
+    2. **协议归一**：把各上游的流事件解析成**内部统一事件模型**（delta 文本、工具调用增量、usage、finish、error），再按自家规范序列化给前端（比如统一 `data: {"type":"text_delta","content":"..."}` + `[DONE]`）。前端只认一套协议，换/加模型不动前端。
+    3. **流式转发要点**：
+       - 逐 chunk 透传而非攒完再发（注意框架的响应缓冲要关）；
+       - 上游 chunk 与自家事件的**背压**：下游慢时不能无限堆积 buffer，要有丢弃/降级策略（如聚合多个 delta 再刷）；
+       - 超时与心跳：上游首字节超时快速失败；整体流空闲超时发注释行保活。
+    4. **错误归一**：上游 401/429/500 要转成自家错误事件（在流内以 error 事件下发，或对未开始的流直接返回 HTTP 错误码）；上游中途断流——已发一半的对话要有恢复语义（前端按已收内容降级展示 + 重试按钮），不能假装成功。
+    5. **增强能力**：聚合层是做**横切功能**的最佳位置——token 计量与计费、多模型灰度路由、prompt 注入审计、缓存（相同前缀+参数命中）、重试（仅对未产生输出的失败流重试，避免重复计费/重复输出）。
+    6. **加分点**：提到流式响应的可观测难点——错误发生在流中间时 HTTP 状态码已是 200，传统 APM 按状态码统计会漏，要按流内事件埋点；以及给每条流加 trace id 贯穿 前端-BFF-上游，排障时能拼出完整时间线。
