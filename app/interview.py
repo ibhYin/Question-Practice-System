@@ -64,6 +64,21 @@ def _skey(sid: int) -> str:
     return f"interview:session:{sid}"
 
 
+def latest_answers(db: DBSession, sid: int) -> dict[int, InterviewAnswer]:
+    """每道题的最新一次作答（attempt_no 最大；同 attempt_no 取 id 大的）。
+    重答引入多行后，所有「代表该题」的读取都应以本函数为准。"""
+    rows = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.session_id == sid)
+        .order_by(InterviewAnswer.attempt_no.desc(), InterviewAnswer.id.desc())
+        .all()
+    )
+    latest: dict[int, InterviewAnswer] = {}
+    for a in rows:
+        latest.setdefault(a.question_id, a)  # 已排好序，首个即最新
+    return latest
+
+
 def _prev_attempt(db: DBSession, question_id: int) -> dict | None:
     """该题最近一次作答（跨场次）。最近一次是跳过（空答案）则返回 None——无回顾价值。"""
     ans = (
@@ -205,12 +220,13 @@ def _get_state(sid: int) -> dict | None:
 
 
 def _rebuild_state(db: DBSession, session: InterviewSession) -> dict:
-    """Redis 状态丢失（过期/重启）时从数据库重建"""
+    """Redis 状态丢失（过期/重启）时从重建"""
     qids = session.question_ids or []
     answered = (
-        db.query(InterviewAnswer.question_id)
+        db.query(func.count(func.distinct(InterviewAnswer.question_id)))
         .filter(InterviewAnswer.session_id == session.id)
-        .count()
+        .scalar()
+        or 0
     )
     state = {"current": min(answered, len(qids)), "question_ids": qids}
     if session.status == "in_progress":
@@ -274,12 +290,12 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
     if not question:
         raise BizError("题目不存在", 404)
 
-    # P0-4 越题防护：只能按顺序作答（重答已答过的题允许）
+    # P0-4 越题防护：只能按顺序作答（重答已答过的题允许）；进度按「已答题数」计，与重答次数无关
     answered_count = (
-        db.query(func.count(InterviewAnswer.id))
+        db.query(func.count(func.distinct(InterviewAnswer.question_id)))
         .filter(InterviewAnswer.session_id == sid)
         .scalar()
-        or 0
+ or 0
     )
     seq = qids.index(question_id) + 1
     if seq > answered_count + 1:
@@ -294,25 +310,24 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
         except Exception:
             model_answer = ""
 
-    # 落库（同一题重复提交则覆盖，不重复计数）
-    ans = (
-        db.query(InterviewAnswer)
+    # 落库：每次提交都是新的一行（重答保留历史尝试），attempt_no 在同场次同题内递增
+    prev_attempt_no = (
+        db.query(func.max(InterviewAnswer.attempt_no))
         .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == question_id)
-        .first()
+        .scalar()
+        or 0
     )
-    created = ans is None
-    if ans:
-        ans.user_answer = user_answer
-        ans.answered_at = datetime.now()
-    else:
-        ans = InterviewAnswer(
-            session_id=sid,
-            question_id=question_id,
-            seq=seq,
-            user_answer=user_answer,
-            model_answer=model_answer,
-        )
-        db.add(ans)
+    attempt_no = prev_attempt_no + 1
+    created = attempt_no == 1  # 首答才计入统计口径（热度/错题本/分类统计）
+    ans = InterviewAnswer(
+        session_id=sid,
+        question_id=question_id,
+        seq=seq,
+        attempt_no=attempt_no,
+        user_answer=user_answer,
+        model_answer=model_answer,
+    )
+    db.add(ans)
 
     score: int | None = None
     comment: str | None = None
@@ -352,9 +367,11 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
                 rdb.hincrby(STATS_KEY, f"{question.category}:score", score)
             invalidate_weakness_cache()  # 新评分影响弱点画像
 
-    # 推进进度
+    # 推进进度：按「已答题数」计（每题去重），重答不虚进
     answered = (
-        db.query(func.count(InterviewAnswer.id)).filter(InterviewAnswer.session_id == sid).scalar()
+        db.query(func.count(func.distinct(InterviewAnswer.question_id)))
+        .filter(InterviewAnswer.session_id == sid)
+        .scalar()
     )
     current = min(answered, len(qids))
     _set_state(sid, current, qids)
@@ -364,6 +381,7 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
     return {
         "question_id": question_id,
         "seq": seq,
+        "attempt_no": attempt_no,
         "score": score,
         "ai_comment": comment,
         "scoring": scoring_async,
@@ -375,10 +393,11 @@ def submit_answer(db: DBSession, sid: int, question_id: int, user_answer: str) -
 
 
 def get_answer_score(db: DBSession, sid: int, question_id: int) -> dict:
-    """轮询异步评分结果"""
+    """轮询异步评分结果（最新一次尝试的行）"""
     ans = (
         db.query(InterviewAnswer)
         .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == question_id)
+        .order_by(InterviewAnswer.attempt_no.desc(), InterviewAnswer.id.desc())
         .first()
     )
     if not ans:
@@ -406,12 +425,9 @@ def finish_interview(db: DBSession, sid: int, abandoned: bool = False) -> dict:
     db.expire_all()
 
     if session.status == "in_progress":
-        answers = (
-            db.query(InterviewAnswer)
-            .filter(InterviewAnswer.session_id == sid)
-            .order_by(InterviewAnswer.seq)
-            .all()
-        )
+        # 每题取最新一次尝试的作答（重答保留历史，但总分按最新水平计）
+        latest_map = latest_answers(db, sid)
+        answers = [latest_map[qid] for qid in (session.question_ids or []) if qid in latest_map]
         scored = [a for a in answers if a.score is not None]
         weak: list[str] = []
         if scored:
@@ -481,6 +497,16 @@ def current_question_brief(db: DBSession, session: InterviewSession, state: dict
 def category_stats(db: DBSession) -> list[dict]:
     data = rdb.hgetall(STATS_KEY)
     if not data:
+        # 口径：每题每场只计最新一次尝试的分数（重答不双计）
+        latest_sq = (
+            db.query(
+                InterviewAnswer.session_id,
+                InterviewAnswer.question_id,
+                func.max(InterviewAnswer.attempt_no).label("max_att"),
+            )
+            .group_by(InterviewAnswer.session_id, InterviewAnswer.question_id)
+            .subquery()
+        )
         rows = (
             db.query(
                 Question.category,
@@ -489,6 +515,12 @@ def category_stats(db: DBSession) -> list[dict]:
                 func.avg(InterviewAnswer.score),
             )
             .join(InterviewAnswer, InterviewAnswer.question_id == Question.id)
+            .join(
+                latest_sq,
+                (InterviewAnswer.session_id == latest_sq.c.session_id)
+                & (InterviewAnswer.question_id == latest_sq.c.question_id)
+                & (InterviewAnswer.attempt_no == latest_sq.c.max_att),
+            )
             .group_by(Question.category)
             .all()
         )
@@ -545,7 +577,17 @@ def export_markdown(db: DBSession, sid: int) -> str:
         raise BizError("面试场次不存在", 404)
 
     qids = session.question_ids or []
-    ans_map = {a.question_id: a for a in session.answers}
+    latest_map = latest_answers(db, sid)
+    # 全部尝试按题分组（旧→新），导出时展示重答历史
+    all_rows = (
+        db.query(InterviewAnswer)
+        .filter(InterviewAnswer.session_id == sid)
+        .order_by(InterviewAnswer.attempt_no.asc(), InterviewAnswer.id.asc())
+        .all()
+    )
+    attempts_map: dict[int, list[InterviewAnswer]] = {}
+    for a in all_rows:
+        attempts_map.setdefault(a.question_id, []).append(a)
     qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
 
     kind = "错题练习" if session.mode == "REVIEW" else "模拟面试"
@@ -576,18 +618,28 @@ def export_markdown(db: DBSession, sid: int) -> str:
         q = qmap.get(qid)
         if not q:
             continue
-        a = ans_map.get(qid)
+        a = latest_map.get(qid)
         lines.append(f"## 第 {idx} 题 · {question_bank.CATEGORY_NAMES.get(q.category, q.category)}")
         lines.append("")
         lines.append(f"**{q.title}**")
         lines.append("")
+        attempts = attempts_map.get(qid, [])
         if a:
             if a.score is not None:
-                lines += [f"> 得分：**{a.score}**", ""]
+                tag = f"（第 {a.attempt_no} 次）" if len(attempts) > 1 else ""
+                lines += [f"> 得分：**{a.score}**{tag}", ""]
             lines += ["**我的回答**：", "", a.user_answer or "（未作答）", ""]
             lines += ["**满分答案**：", "", a.model_answer or "（未生成）", ""]
             if a.ai_comment:
                 lines += [f"**AI 点评**：{a.ai_comment}", ""]
+            # 历史尝试（重答的价值闭环：对比每次作答的进步）
+            if len(attempts) > 1:
+                lines += [f"**历史尝试（共 {len(attempts)} 次）**：", ""]
+                for old in attempts[:-1]:
+                    s = f"{old.score} 分" if old.score is not None else "未评分"
+                    excerpt = (old.user_answer or "（未作答）")[:200]
+                    ell = "…" if len(old.user_answer or "") > 200 else ""
+                    lines += [f"- 尝试 #{old.attempt_no}（{s}）：{excerpt}{ell}", ""]
         else:
             lines += ["（未作答）", ""]
         # 追问与解答（独立于作答状态——REVIEW 场次可能只追问未作答）

@@ -19,9 +19,32 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 async def lifespan(_app: FastAPI):
     # 启动时自动建表（本项目规模不做 migration）
     Base.metadata.create_all(bind=engine)
+    # create_all 不改已有表：重答功能需要 attempt_no 列与联合索引，这里幂等补齐
+    _migrate_answer_attempts()
     # 智能备份：距上次备份超过 24h 则后台静默备份（用过应用就有新鲜恢复点）
     maybe_backup()
     yield
+
+
+def _migrate_answer_attempts() -> None:
+    """interview_answer 补 attempt_no 列（同场次同题第几次尝试）+ 查询索引，幂等可重复执行。"""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "ALTER TABLE interview_answer ADD COLUMN attempt_no INT NOT NULL DEFAULT 1"
+            ))
+        except Exception:
+            pass  # 列已存在
+        try:
+            conn.execute(text(
+                "CREATE INDEX ix_answer_session_question_attempt "
+                "ON interview_answer (session_id, question_id, attempt_no)"
+            ))
+        except Exception:
+            pass  # 索引已存在
+        conn.commit()
 
 
 app = FastAPI(title="面试刷题系统", version="1.0.0", lifespan=lifespan)

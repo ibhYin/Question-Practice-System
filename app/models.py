@@ -59,7 +59,11 @@ class InterviewSession(Base):
 
 
 class InterviewAnswer(Base):
-    """一题的作答记录：你的回答 + 满分答案 + 评分点评"""
+    """一题的一次作答记录：你的回答 + 满分答案 + 评分点评。
+
+    同场次同题允许多次尝试（重答），attempt_no 从 1 递增；
+    展示与统计默认取最新一次，历史尝试保留可回看。
+    """
 
     __tablename__ = "interview_answer"
 
@@ -67,11 +71,16 @@ class InterviewAnswer(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("interview_session.id"), index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("question.id"), index=True)
     seq: Mapped[int] = mapped_column(Integer)  # 第几题（1 起）
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)  # 同场次同题的第几次尝试（1 起）
     user_answer: Mapped[str] = mapped_column(Text, default="")
     model_answer: Mapped[str] = mapped_column(Text, default="")
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0-100，无 LLM 时为空
     ai_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     answered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("ix_answer_session_question_attempt", "session_id", "question_id", "attempt_no"),
+    )
 
     session: Mapped["InterviewSession"] = relationship(back_populates="answers")
     question: Mapped["Question"] = relationship()

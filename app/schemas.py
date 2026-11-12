@@ -75,6 +75,7 @@ class AnswerSubmit(BaseModel):
 class AnswerResult(BaseModel):
     question_id: int
     seq: int
+    attempt_no: int = 1  # 同场次同题的第几次尝试（重答递增，旧记录保留）
     score: Optional[int] = None
     ai_comment: Optional[str] = None
     scoring: bool = False  # true = LLM 异步评分中，前端轮询补显

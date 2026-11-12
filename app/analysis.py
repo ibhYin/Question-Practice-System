@@ -35,6 +35,16 @@ def compute_weakness(db: DBSession, force: bool = False) -> dict:
             except ValueError:
                 pass
 
+    # 口径：每题每场只取最新一次尝试（重答改善后弱点画像随之改善，不被旧分拖住）
+    latest_sq = (
+        db.query(
+            InterviewAnswer.session_id,
+            InterviewAnswer.question_id,
+            func.max(InterviewAnswer.attempt_no).label("max_att"),
+        )
+        .group_by(InterviewAnswer.session_id, InterviewAnswer.question_id)
+        .subquery()
+    )
     rows = (
         db.query(
             InterviewAnswer.question_id,
@@ -46,6 +56,12 @@ def compute_weakness(db: DBSession, force: bool = False) -> dict:
             Question.tags,
         )
         .join(Question, Question.id == InterviewAnswer.question_id)
+        .join(
+            latest_sq,
+            (InterviewAnswer.session_id == latest_sq.c.session_id)
+            & (InterviewAnswer.question_id == latest_sq.c.question_id)
+            & (InterviewAnswer.attempt_no == latest_sq.c.max_att),
+        )
         .filter(InterviewAnswer.score.isnot(None))
         .all()
     )

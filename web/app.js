@@ -431,6 +431,32 @@ const InterviewView = {
       startTimer();
     }
 
+    /* 按理解重新作答：保留上一轮记录（后端新增一行），回到答题视图对照重写 */
+    function reanswer() {
+      if (!state.result || !resultQ.value) return;
+      stopTimer();
+      if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+      // 上一轮作答作为「上次作答」提示展示（分数/回答/点评），辅助对照改进
+      const r = state.result;
+      const pa = (r.score != null || (r.user_answer || '').trim()) ? {
+        score: r.score,
+        user_answer: r.user_answer,
+        ai_comment: r.ai_comment,
+      } : null;
+      const meta = resultQ.value;
+      state.question = {
+        id: r.question_id, seq: r.seq,
+        title: meta.title, category: meta.category,
+        difficulty: meta.difficulty, tags: meta.tags || [],
+        prev_attempt: pa,
+      };
+      state.answer = '';
+      state.result = null;
+      state.addedReview = false;
+      state.phase = 'answering';
+      startTimer();
+    }
+
     async function addToReview() {
       try {
         await api(`/review/${state.result.question_id}/add`, { method: 'POST' });
@@ -460,7 +486,7 @@ const InterviewView = {
     onMounted(() => { loadProgress(); loadSessionQs(); });
     onUnmounted(() => { stopTimer(); if (state.pollTimer) clearInterval(state.pollTimer); });
 
-    return { state, submit, nextQuestion, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, loadChat, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, resultQ, sendChat, chatList, loadFramework, frameworkVisible, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
+    return { state, submit, nextQuestion, reanswer, finish, abandon, addToReview, saveDraft, fmtElapsed, renderAnswer, loadKnowledge, loadChat, openRelated, openCard, markCard, loadPackForCard, gotoQuestion, unlockedIds, resultQ, sendChat, chatList, loadFramework, frameworkVisible, CARD_STATUS_META, CATEGORY_NAMES, DIFF_LABEL, DIFF_COLOR, scoreClass };
   },
   template: `
   <div>
@@ -568,6 +594,8 @@ const InterviewView = {
             <button v-if="state.result.score == null && !state.addedReview" class="btn" @click="addToReview">＋ 这题没掌握，加入复习</button>
             <span v-if="state.addedReview" class="badge ok" style="align-self:center">已加入错题本，明天复习</span>
           </template>
+          <button v-if="!state.result.scoring && !state.finishing" class="btn ghost"
+                  @click="reanswer" title="保留本次记录，新增一次作答尝试；总分按每题最新一次评分计算">✍️ 按理解重新作答</button>
         </div>
 
         <!-- 🗺 本题知识框架（懒生成，缓存于题库） -->

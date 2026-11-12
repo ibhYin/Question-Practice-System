@@ -54,7 +54,8 @@ def get_interview(sid: int, db: DBSession = Depends(get_db)):
         raise BizError("面试场次不存在", 404)
 
     qids = session.question_ids or []
-    ans_map = {a.question_id: a for a in session.answers}
+    # 每题取最新一次尝试（重答保留历史，展示与统计取最新）
+    latest_map = interview_svc.latest_answers(db, sid)
     # 一次批量取题，避免逐题 N+1
     qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
     answers: list[AnswerDetail] = []
@@ -62,7 +63,7 @@ def get_interview(sid: int, db: DBSession = Depends(get_db)):
         q = qmap.get(qid)
         if not q:
             continue
-        a = ans_map.get(qid)
+        a = latest_map.get(qid)
         answers.append(
             AnswerDetail(
                 seq=idx + 1,
@@ -117,14 +118,14 @@ def session_questions(sid: int, db: DBSession = Depends(get_db)):
     if not session:
         raise BizError("面试场次不存在", 404)
     qids = session.question_ids or []
-    ans_map = {a.question_id: a for a in session.answers}
+    latest_map = interview_svc.latest_answers(db, sid)
     qmap = {q.id: q for q in db.query(Question).filter(Question.id.in_(qids)).all()} if qids else {}
     items = []
     for idx, qid in enumerate(qids, 1):
         q = qmap.get(qid)
         if not q:
             continue
-        a = ans_map.get(qid)
+        a = latest_map.get(qid)
         items.append(
             {
                 "id": qid,
@@ -161,6 +162,7 @@ def get_chat(sid: int, qid: int, db: DBSession = Depends(get_db)):
     ans = (
         db.query(InterviewAnswer)
         .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == qid)
+        .order_by(InterviewAnswer.attempt_no.desc(), InterviewAnswer.id.desc())
         .first()
     )
     msgs = (
@@ -201,6 +203,7 @@ def post_chat(sid: int, qid: int, body: dict, db: DBSession = Depends(get_db)):
     ans = (
         db.query(InterviewAnswer)
         .filter(InterviewAnswer.session_id == sid, InterviewAnswer.question_id == qid)
+        .order_by(InterviewAnswer.attempt_no.desc(), InterviewAnswer.id.desc())
         .first()
     )
 
