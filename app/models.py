@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -84,6 +84,19 @@ class InterviewAnswer(Base):
 
     session: Mapped["InterviewSession"] = relationship(back_populates="answers")
     question: Mapped["Question"] = relationship()
+
+
+class Resume(Base):
+    """简历版本：上传解析后的纯文本，供「简历深挖」出题使用。多版本保留，出题取激活版本。"""
+
+    __tablename__ = "resume"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(Text)  # 抽取/粘贴的纯文本
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)  # 出题使用的版本
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class StudyDoc(Base):

@@ -19,6 +19,7 @@ const CATEGORY_NAMES = {
   CONCURRENT: '并发编程', SPRING: 'Spring', NETWORK: '计算机网络', SCENARIO: '场景设计',
   AI_APP: 'AI 应用开发', AGENT: 'Agent 开发', FULLSTACK: '全栈开发',
   OS: '操作系统', DISTRIBUTED: '分布式', ALGO: '算法', PYTHON: 'Python',
+  RESUME: '简历深挖',
 };
 /* 八股卡背诵状态元数据（八股文库 / 行动面板 / 相关八股条共用） */
 const CARD_STATUS_META = {
@@ -1619,14 +1620,172 @@ const SettingsView = {
   `,
 };
 
+/* ---------- 简历面试：上传简历 → 生成深挖题 → 开考 ---------- */
+const ResumeView = {
+  name: 'ResumeView',
+  emits: ['start-session'],
+  setup(props, { emit }) {
+    const state = Vue.reactive({
+      loading: true,
+      versions: [],
+      questionCount: 0,
+      uploading: false,
+      pasteOpen: false,
+      pasteText: '',
+      genCount: 8,
+      generating: false,
+      genResult: null,   // {added, skipped, question_count}
+      error: '',
+      starting: false,
+    });
+
+    async function load() {
+      state.loading = true;
+      try {
+        const d = await api('/resume');
+        state.versions = d.versions;
+        state.questionCount = d.question_count;
+      } catch (e) { state.error = e.message; }
+      state.loading = false;
+    }
+    onActivated(load);
+    load();
+
+    async function uploadFile(ev) {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (!f) return;
+      state.uploading = true; state.error = '';
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const resp = await fetch('/api/resume/upload', { method: 'POST', body: fd });
+        const d = await resp.json();
+        if (!resp.ok) throw new Error(d.detail || '上传失败');
+        await load();
+      } catch (e) { state.error = e.message; }
+      state.uploading = false;
+    }
+
+    async function pasteSave() {
+      if (state.pasteText.trim().length < 100) { state.error = '请粘贴完整简历（至少 100 字符）'; return; }
+      state.uploading = true; state.error = '';
+      try {
+        await api('/resume/paste', { method: 'POST', body: { content: state.pasteText } });
+        state.pasteText = ''; state.pasteOpen = false;
+        await load();
+      } catch (e) { state.error = e.message; }
+      state.uploading = false;
+    }
+
+    async function activate(id) {
+      try { await api(`/resume/${id}/activate`, { method: 'POST', body: {} }); await load(); }
+      catch (e) { state.error = e.message; }
+    }
+    async function removeVersion(id) {
+      try { await api(`/resume/${id}`, { method: 'DELETE' }); await load(); }
+      catch (e) { state.error = e.message; }
+    }
+
+    async function generate() {
+      state.generating = true; state.error = ''; state.genResult = null;
+      try {
+        const d = await api('/resume/generate-questions', {
+          method: 'POST',
+          body: { count: state.genCount },
+        });
+        state.genResult = d;
+        state.questionCount = d.question_count;
+      } catch (e) { state.error = e.message; }
+      state.generating = false;
+    }
+
+    async function startInterview() {
+      if (!state.questionCount) { state.error = '题池为空，请先生成简历题'; return; }
+      state.starting = true; state.error = '';
+      try {
+        const r = await api('/interviews', {
+          method: 'POST',
+          body: { position: '简历项目深挖', count: Math.min(state.genCount, state.questionCount), categories: ['RESUME'] },
+        });
+        emit('start-session', r.session_id);
+      } catch (e) { state.error = e.message; }
+      state.starting = false;
+    }
+
+    return { state, uploadFile, pasteSave, activate, removeVersion, generate, startInterview, fmtTime, CATEGORY_NAMES };
+  },
+  template: `
+  <div>
+    <div v-if="state.loading" class="card">加载中…</div>
+    <template v-else>
+      <div class="card">
+        <h3>📄 简历面试</h3>
+        <p class="hint" style="line-height:1.8">
+          上传你的简历，AI 会围绕<b>简历上写的项目、量化数据和技能</b>生成深挖追问题
+          （为什么这么选型 / 指标怎么测出来的 / 踩过什么坑），答完与建议回答对比 + AI 评分。
+          简历文本会发送给你配置的 LLM 服务商。
+        </p>
+        <div class="answer-actions">
+          <label class="btn primary" style="cursor:pointer">
+            {{ state.uploading ? '处理中…' : '⬆️ 上传简历（PDF / TXT / MD）' }}
+            <input type="file" accept=".pdf,.txt,.md" style="display:none" @change="uploadFile" :disabled="state.uploading">
+          </label>
+          <button class="btn ghost" @click="state.pasteOpen = !state.pasteOpen">{{ state.pasteOpen ? '收起粘贴框' : '📋 或直接粘贴文本' }}</button>
+        </div>
+        <div v-if="state.pasteOpen" style="margin-top:12px">
+          <textarea v-model="state.pasteText" class="input" rows="6" placeholder="把简历全文粘贴到这里…"></textarea>
+          <div class="answer-actions"><button class="btn primary" :disabled="state.uploading" @click="pasteSave">保存为新版本</button></div>
+        </div>
+        <p v-if="state.error" class="error">{{ state.error }}</p>
+      </div>
+
+      <div class="card">
+        <h3>🗂 简历版本 <span class="hint">出题时使用 ✅ 激活版本；已生成的题目保留在题库（类别：简历深挖）</span></h3>
+        <div v-if="!state.versions.length" class="empty">还没有上传过简历</div>
+        <ul v-else class="hot-list">
+          <li v-for="v in state.versions" :key="v.id">
+            <span class="cat">{{ v.is_active ? '✅ 使用中' : '历史' }}</span>
+            {{ v.filename }} <em>{{ v.char_count }} 字 · {{ fmtTime(v.created_at) }}</em>
+            <span style="margin-left:auto; display:flex; gap:6px">
+              <button v-if="!v.is_active" class="btn small ghost" @click="activate(v.id)">设为使用中</button>
+              <button class="btn small ghost danger" @click="removeVersion(v.id)">删除</button>
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>🎯 生成简历深挖题 <span class="hint">题池现有 {{ state.questionCount }} 道</span></h3>
+        <div class="answer-actions">
+          <span v-for="n in [5, 8, 10, 15]" :key="n" class="chip" :class="{ on: state.genCount === n }" @click="state.genCount = n">{{ n }} 题</span>
+          <button class="btn primary" :disabled="state.generating || !state.versions.some(v => v.is_active)" @click="generate">
+            {{ state.generating ? 'AI 正在读简历出题…（约 1-2 分钟）' : '🧠 生成深挖题' }}
+          </button>
+        </div>
+        <p v-if="state.genResult" class="hint">
+          ✅ 本次生成 {{ state.genResult.added }} 道{{ state.genResult.skipped ? '（去重跳过 ' + state.genResult.skipped + ' 道）' : '' }}，题池共 {{ state.genResult.question_count }} 道。可在「题库」页筛选「简历深挖」审题或修改。
+        </p>
+        <div class="answer-actions" style="margin-top:8px">
+          <button class="btn primary" :disabled="state.starting || !state.questionCount" @click="startInterview">
+            {{ state.starting ? '开考中…' : (state.questionCount ? '🎤 开始简历面试（' + Math.min(state.genCount, state.questionCount) + ' 题）' : '题池为空，请先生成') }}
+          </button>
+        </div>
+      </div>
+    </template>
+  </div>
+  `,
+};
+
 /* ---------- 根组件 ---------- */
 const App = {
-  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView, MapView, StudyView },
+  components: { InterviewView, SessionsView, ReviewView, BankView, SettingsView, MapView, StudyView, ResumeView },
   setup() {
     const view = ref('home');
     const sessionId = ref(null);
     const tabs = [
       { key: 'home', label: '开始面试' },
+      { key: 'resume', label: '简历面试' },
       { key: 'study', label: '八股文库' },
       { key: 'map', label: '知识地图' },
       { key: 'sessions', label: '复盘' },
@@ -1675,14 +1834,14 @@ const App = {
         const s = JSON.parse(localStorage.getItem('last_settings') || 'null');
         if (!s) return;
         if ([5, 10, 15].includes(s.count)) count.value = s.count;
-        if (Array.isArray(s.categories)) picked.value = s.categories.filter(c => (categories.value || []).some(x => x.code === c) || ['MYSQL','REDIS','JAVA','JVM','CONCURRENT','SPRING','NETWORK','SCENARIO','AI_APP','AGENT','FULLSTACK','OS','DISTRIBUTED','ALGO','PYTHON'].includes(c));
+        if (Array.isArray(s.categories)) picked.value = s.categories.filter(c => (categories.value || []).some(x => x.code === c) || ['MYSQL','REDIS','JAVA','JVM','CONCURRENT','SPRING','NETWORK','SCENARIO','AI_APP','AGENT','FULLSTACK','OS','DISTRIBUTED','ALGO','PYTHON','RESUME'].includes(c));
       } catch (e) { /* 忽略 */ }
     }
 
     function go(v) { view.value = v; }
 
     /* ---- Hash 路由：F5 恢复当前页面 + 浏览器前进后退 ---- */
-    const VIEW_HASH = { home: '#/', sessions: '#/sessions', review: '#/review', bank: '#/bank', settings: '#/settings', map: '#/map', study: '#/study' };
+    const VIEW_HASH = { home: '#/', resume: '#/resume', sessions: '#/sessions', review: '#/review', bank: '#/bank', settings: '#/settings', map: '#/map', study: '#/study' };
     function syncHash() {
       const target = view.value === 'interview' && sessionId.value
         ? `#/interview/${sessionId.value}`
@@ -1697,13 +1856,13 @@ const App = {
         view.value = 'interview';
         return;
       }
-      view.value = { '#/': 'home', '#/sessions': 'sessions', '#/review': 'review', '#/bank': 'bank', '#/settings': 'settings', '#/map': 'map', '#/study': 'study' }[h] || 'home';
+      view.value = { '#/': 'home', '#/resume': 'resume', '#/sessions': 'sessions', '#/review': 'review', '#/bank': 'bank', '#/settings': 'settings', '#/map': 'map', '#/study': 'study' }[h] || 'home';
       if (view.value !== 'interview') sessionId.value = null;
     }
     window.addEventListener('hashchange', applyHash);
     // 视图/session 变化同步到地址栏
     watch([view, sessionId], syncHash);
-    const VIEW_TITLES = { home: '开始面试', interview: '面试中', study: '八股文库', map: '知识地图', sessions: '复盘', review: '错题本', bank: '题库', settings: '设置' };
+    const VIEW_TITLES = { home: '开始面试', interview: '面试中', resume: '简历面试', study: '八股文库', map: '知识地图', sessions: '复盘', review: '错题本', bank: '题库', settings: '设置' };
     watch(view, (v) => {
       document.title = (VIEW_TITLES[v] ? VIEW_TITLES[v] + ' · ' : '') + '面试刷题系统';
       if (v === 'home') { loadStats(); loadHealth(); loadMeta(); checkResume(); }
@@ -1820,6 +1979,7 @@ const App = {
     function onHome() { view.value = 'home'; sessionId.value = null; resumeSession.value = null; }
     function onInterviewFinished() { loadStats(); checkResume(); loadHealth(); }
     function onVariantStart(sid) { sessionId.value = sid; view.value = 'interview'; }
+    function onResumeStart(sid) { sessionId.value = sid; view.value = 'interview'; }
 
     onMounted(() => {
       applyHash();          // 按 URL hash 恢复页面（如刷新前在面试页）
@@ -1835,7 +1995,7 @@ const App = {
       position, count, categories, picked, toggleCat, starting, error, llmEnabled,
       recentPositions, removeRecentPosition,
       startInterview, quickDrill, stats, chart, loadHealth,
-      resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished, onVariantStart,
+      resumeSession, resumeInterview, abandonResume, onHome, onInterviewFinished, onVariantStart, onResumeStart,
     };
   },
 };

@@ -132,7 +132,8 @@ def create_interview(db: DBSession, position: str, count: int, categories: list[
     used_llm = False
 
     # 题量不足且配置了 LLM：AI 生成新题干入库（满分答案在答题时按需生成，避免创建面试长时间等待）
-    if len(picked) < count and llm.is_enabled():
+    # 简历深挖场次跳过通用补题——通用题会污染简历专属题池，缺题时按现有题数开考
+    if len(picked) < count and llm.is_enabled() and "RESUME" not in (categories or []):
         need = count - len(picked)
         recent_titles = [
             t

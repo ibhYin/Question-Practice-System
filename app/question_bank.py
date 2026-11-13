@@ -14,6 +14,7 @@ CATEGORIES = [
     "MYSQL", "REDIS", "JAVA", "JVM", "CONCURRENT", "SPRING", "NETWORK", "SCENARIO",
     "AI_APP", "AGENT", "FULLSTACK",
     "OS", "DISTRIBUTED", "ALGO", "PYTHON",
+    "RESUME",
 ]
 
 CATEGORY_NAMES = {
@@ -32,6 +33,7 @@ CATEGORY_NAMES = {
     "DISTRIBUTED": "分布式",
     "ALGO": "算法",
     "PYTHON": "Python",
+    "RESUME": "简历深挖",
 }
 
 # 各岗位画像：类别 -> 出题权重

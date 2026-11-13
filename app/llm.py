@@ -116,6 +116,43 @@ def generate_questions(
     return data.get("questions", [])
 
 
+RESUME_QUESTIONS_SYSTEM = (
+    "你是一位资深的中文技术面试官，正在对候选人做简历深挖面试："
+    "围绕简历上写的项目、数据与技能逐层追问，验证候选人的真实掌握程度。"
+    "只输出 JSON，不要输出其他内容。"
+)
+
+
+def generate_resume_questions(resume_text: str, n: int, avoid_titles: list[str]) -> list[dict]:
+    """基于简历生成个人化深挖题（含建议回答要点）。题目必须锚定简历事实，不编造。"""
+    avoid = "、".join(avoid_titles[-30:]) if avoid_titles else "（无）"
+    user = (
+        "以下是候选人的完整简历：\n\n"
+        f"{resume_text.strip()}\n\n"
+        f"请基于这份简历生成 {n} 道简历深挖面试题，要求：\n"
+        "1. 题干必须锚定简历中的具体事实（项目名、技术选型、量化指标、架构细节），"
+        "让候选人解释'怎么做的/为什么这么做/数据怎么测出来的'；严禁编造简历中没有的内容，"
+        "也不要出与简历无关的通用八股题\n"
+        "2. 覆盖多类追问：项目架构与决策（如'为什么选 Django 而不是 FastAPI 做 Agent'）、"
+        "量化指标的真实性验证（如'执行准确率 57.7%→65.1% 的消融是怎么做的'）、"
+        "最难的问题与踩坑、安全设计（如 MCP 的 Host 白名单/沙箱）、可复用组件的边界\n"
+        "3. 难度分布合理：difficulty 用 1(易)/2(中)/3(难)，深挖细节的题给 3\n"
+        "4. tags 给 2-4 个技术标签（如 MCP、A2A、引用校验、Text-to-SQL）\n"
+        "5. answer 给出'建议回答要点'：基于简历事实，用 STAR 框架"
+        "（情境-任务-行动-结果）组织，列出面试官期待的得分点，300 字以内\n"
+        f"6. 严禁与这些已有题目重复：{avoid}\n"
+        '7. 返回 JSON：{"questions": [{"title": "...", "difficulty": 2, '
+        '"tags": ["MCP"], "answer": "..."}]}'
+    )
+    text = _chat(
+        [{"role": "system", "content": RESUME_QUESTIONS_SYSTEM}, {"role": "user", "content": user}],
+        temperature=0.4,
+        timeout=180,
+    )
+    data = _parse_json(text)
+    return data.get("questions", [])
+
+
 # ---------- 满分答案 ----------
 
 GEN_ANSWER_SYSTEM = (
